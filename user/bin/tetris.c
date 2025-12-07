@@ -494,7 +494,7 @@ int main(kapi_t *kapi, int argc, char **argv) {
     init_game();
 
     int drop_counter = 0;
-    int drop_speed = 20;
+    int drop_speed = 40;  // Start slower (was 20)
 
     while (1) {
         if (process_input() < 0) {
@@ -506,8 +506,9 @@ int main(kapi_t *kapi, int argc, char **argv) {
             drop_counter = 0;
             update_game();
 
-            drop_speed = 21 - level * 2;
-            if (drop_speed < 2) drop_speed = 2;
+            // Gentler speed curve: starts at 40, decreases by 3 per level
+            drop_speed = 43 - level * 3;
+            if (drop_speed < 5) drop_speed = 5;
         }
 
         if (game_over) {
