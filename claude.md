@@ -97,6 +97,12 @@ make run-nographic  # Terminal only
 - **aarch64 va_list**: Can't pass va_list to helper functions easily. Inline the va_arg handling.
 - **QEMU virt machine**: Uses PL011 UART at 0x09000000, GIC at 0x08000000
 
+## Current Status
+- Console works: prints to QEMU window with colors
+- Input works via UART: type in terminal, shows on screen
+- Virtio-keyboard: WIP, hangs during init (needs debugging in next session)
+- NEXT: Build shell (command parsing), then coreutils
+
 ## Session Log
 ### Session 1
 - Created project structure
