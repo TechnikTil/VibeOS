@@ -12,6 +12,7 @@
 #include "fb.h"
 #include "vfs.h"
 #include "process.h"
+#include "vi.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -71,6 +72,12 @@ static void cmd_help(void) {
     console_puts("cat");
     console_set_color(COLOR_WHITE, COLOR_BLACK);
     console_puts(" <file>    - Show file contents\n");
+
+    console_puts("  ");
+    console_set_color(COLOR_GREEN, COLOR_BLACK);
+    console_puts("vi");
+    console_set_color(COLOR_WHITE, COLOR_BLACK);
+    console_puts(" <file>     - Edit file\n");
 
     console_set_color(COLOR_AMBER, COLOR_BLACK);
     console_puts(" System:\n");
@@ -297,6 +304,15 @@ static void cmd_cat(int argc, char *argv[]) {
     }
 }
 
+static void cmd_vi(int argc, char *argv[]) {
+    if (argc < 2) {
+        console_puts("Usage: vi <file>\n");
+        return;
+    }
+
+    vi_edit(argv[1]);
+}
+
 // ============ Shell Core ============
 
 // Parse command line into argc/argv
@@ -422,6 +438,8 @@ static void execute_command(char *cmd) {
         cmd_touch(argc, argv);
     } else if (str_eq(argv[0], "cat")) {
         cmd_cat(argc, argv);
+    } else if (str_eq(argv[0], "vi")) {
+        cmd_vi(argc, argv);
     } else {
         // Try to execute as a program
         // First check if it's a path
