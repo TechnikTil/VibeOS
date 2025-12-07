@@ -22,6 +22,7 @@ typedef struct {
     // Console I/O
     void (*putc)(char c);
     void (*puts)(const char *s);
+    void (*uart_puts)(const char *s);  // Direct UART output
     int  (*getc)(void);              // Non-blocking, returns -1 if no input
     void (*set_color)(uint32_t fg, uint32_t bg);
     void (*clear)(void);             // Clear screen
@@ -47,6 +48,20 @@ typedef struct {
     // Process
     void (*exit)(int status);
     int  (*exec)(const char *path);   // Run another program
+
+    // Framebuffer (for GUI programs)
+    uint32_t *fb_base;               // Direct framebuffer pointer
+    uint32_t fb_width;               // Screen width in pixels
+    uint32_t fb_height;              // Screen height in pixels
+    void (*fb_put_pixel)(uint32_t x, uint32_t y, uint32_t color);
+    void (*fb_fill_rect)(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
+    void (*fb_draw_char)(uint32_t x, uint32_t y, char c, uint32_t fg, uint32_t bg);
+    void (*fb_draw_string)(uint32_t x, uint32_t y, const char *s, uint32_t fg, uint32_t bg);
+
+    // Mouse (for GUI programs)
+    void (*mouse_get_pos)(int *x, int *y);         // Get screen position
+    uint8_t (*mouse_get_buttons)(void);            // Get button state
+    void (*mouse_poll)(void);                      // Poll for updates
 
 } kapi_t;
 

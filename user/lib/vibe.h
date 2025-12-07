@@ -19,6 +19,7 @@ typedef struct kapi {
     // Console I/O
     void (*putc)(char c);
     void (*puts)(const char *s);
+    void (*uart_puts)(const char *s);  // Direct UART output
     int  (*getc)(void);
     void (*set_color)(uint32_t fg, uint32_t bg);
     void (*clear)(void);
@@ -44,7 +45,26 @@ typedef struct kapi {
     // Process
     void (*exit)(int status);
     int  (*exec)(const char *path);
+
+    // Framebuffer (for GUI programs)
+    uint32_t *fb_base;
+    uint32_t fb_width;
+    uint32_t fb_height;
+    void (*fb_put_pixel)(uint32_t x, uint32_t y, uint32_t color);
+    void (*fb_fill_rect)(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color);
+    void (*fb_draw_char)(uint32_t x, uint32_t y, char c, uint32_t fg, uint32_t bg);
+    void (*fb_draw_string)(uint32_t x, uint32_t y, const char *s, uint32_t fg, uint32_t bg);
+
+    // Mouse (for GUI programs)
+    void (*mouse_get_pos)(int *x, int *y);
+    uint8_t (*mouse_get_buttons)(void);
+    void (*mouse_poll)(void);
 } kapi_t;
+
+// Mouse button masks
+#define MOUSE_BTN_LEFT   0x01
+#define MOUSE_BTN_RIGHT  0x02
+#define MOUSE_BTN_MIDDLE 0x04
 
 // Colors (must match kernel fb.h - these are RGB values)
 #define COLOR_BLACK   0x00000000

@@ -8,6 +8,8 @@
 #include "memory.h"
 #include "vfs.h"
 #include "process.h"
+#include "fb.h"
+#include "mouse.h"
 
 // Global kernel API instance
 kapi_t kapi;
@@ -90,8 +92,10 @@ void kapi_init(void) {
     kapi.version = KAPI_VERSION;
 
     // Console
+    extern void uart_puts(const char *s);
     kapi.putc = console_putc;
     kapi.puts = console_puts;
+    kapi.uart_puts = uart_puts;
     kapi.getc = keyboard_getc;
     kapi.set_color = kapi_set_color;
     kapi.clear = console_clear;
@@ -117,4 +121,18 @@ void kapi_init(void) {
     // Process
     kapi.exit = kapi_exit;
     kapi.exec = kapi_exec;
+
+    // Framebuffer
+    kapi.fb_base = fb_base;
+    kapi.fb_width = fb_width;
+    kapi.fb_height = fb_height;
+    kapi.fb_put_pixel = fb_put_pixel;
+    kapi.fb_fill_rect = fb_fill_rect;
+    kapi.fb_draw_char = fb_draw_char;
+    kapi.fb_draw_string = fb_draw_string;
+
+    // Mouse
+    kapi.mouse_get_pos = mouse_get_screen_pos;
+    kapi.mouse_get_buttons = mouse_get_buttons;
+    kapi.mouse_poll = mouse_poll;
 }

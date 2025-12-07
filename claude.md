@@ -62,15 +62,17 @@ Phase 2: Programs - MONOLITH APPROACH
    - Tried external programs, hit linker issues with 6+ embedded binaries
    - Win3.1 vibes - everything in one binary is fine
 
-Phase 3: Apps (IN PROGRESS)
+Phase 3: Apps (DONE)
 10. ~~Text editor~~ - vi clone with modal editing (normal/insert/command modes)
-11. Snake - terminal-based game (NEXT)
-12. More features as needed
+11. ~~Snake~~ - moved to /bin/snake userspace program
+12. ~~Tetris~~ - moved to /bin/tetris userspace program
 
-Phase 4: GUI (Future)
-13. Window manager
-14. Desktop/Finder
-15. DOOM?
+Phase 4: GUI (IN PROGRESS)
+13. ~~Mouse driver~~ - virtio-tablet support
+14. ~~Window manager~~ - /bin/desktop with draggable windows, close boxes
+15. ~~Double buffering~~ - reduces flicker
+16. Terminal emulator, notepad, dock - TODO
+17. DOOM?
 
 ## Technical Notes
 
@@ -81,7 +83,7 @@ Phase 4: GUI (Future)
 - 0x0A000000: RTC
 - 0x0A003E00: Virtio keyboard (device 31)
 - 0x40000000+: RAM (we load here)
-- 0x40200000: Program load address (if using external programs)
+- 0x40400000: Program load address (moved from 0x40200000 to avoid heap overlap)
 
 ### Key Files
 - boot/boot.S - Entry point, CPU init, BSS clear
@@ -106,7 +108,7 @@ Phase 4: GUI (Future)
 - Makefile - Build system
 - disk.img - FAT32 disk image (created by `make disk`)
 
-### User Directory (currently unused)
+### User Directory (userspace programs)
 - user/lib/vibe.h - Userspace library header
 - user/lib/crt0.S - C runtime startup
 - user/bin/*.c - Program sources
@@ -159,7 +161,7 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
 | Component | Decision | Notes |
 |-----------|----------|-------|
 | Kernel | Monolithic | Everything in kernel space, Win3.1-style |
-| Programs | Built-in | All commands in shell, no external binaries |
+| Programs | Disk-based | Games/GUI in /bin, shell commands built-in |
 | Memory | Flat (no MMU) | No virtual memory, shared address space |
 | Filesystem | FAT32 on virtio-blk | Persistent, mountable on host, read/write |
 | Shell | POSIX-ish | Familiar syntax, basic redirects |
@@ -183,6 +185,9 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
 - **Packed structs on ARM**: Accessing fields in `__attribute__((packed))` structs causes unaligned access faults. Read bytes individually and assemble values manually.
 - **FAT32 minimum size**: FAT32 requires at least ~33MB. Use 64MB disk image.
 - **Virtio-blk polling**: Save `used->idx` before submitting request, then poll until it changes. Don't use a global `last_used_idx` that persists across requests.
+- **Virtio-input device detection**: Both keyboard and tablet are virtio-input. Must check device name contains "Keyboard" specifically, not just starts with "Q".
+- **Heap vs program memory overlap**: Large heap allocations can overlap with program load address. Programs currently load at fixed 0x40400000. TODO: implement proper dynamic loading.
+- **Userspace has no stdint.h**: Use `unsigned long` instead of `uint64_t` in user programs, or define types in vibe.h.
 
 ## Session Log
 ### Session 1
@@ -250,3 +255,23 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
 - Now mkdir, touch, echo > file all persist to disk!
 - Files created in VibeOS are visible when mounting disk.img on macOS
 - **Achievement**: Full read/write persistent filesystem!
+
+### Session 8
+- Moved snake and tetris from kernel to userspace (/bin/snake, /bin/tetris)
+- Extended kapi with framebuffer access (fb_base, width, height, drawing functions)
+- Extended kapi with mouse input (position, buttons, poll)
+- Added uart_puts to kapi for direct UART debug output
+- Built virtio-tablet mouse driver (kernel/mouse.c)
+- Fixed keyboard detection to not conflict with tablet (both are virtio-input)
+- Created /bin/desktop - window manager with:
+  - Classic Mac System 7 aesthetic (gray desktop, striped title bars)
+  - Draggable windows by title bar
+  - Close boxes that work
+  - Menu bar (File, Edit, View, Special)
+  - Mouse cursor with save/restore
+  - Double buffering to reduce flicker
+- Fixed heap/program memory overlap bug:
+  - Backbuffer allocation (~2MB) was overlapping program load address
+  - Moved program load address from 0x40200000 to 0x40400000
+  - **TODO**: Implement proper dynamic loading (programs shouldn't have hardcoded addresses)
+- **Achievement**: GUI desktop environment working!

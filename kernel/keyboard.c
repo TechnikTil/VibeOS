@@ -209,7 +209,7 @@ static volatile uint32_t *find_virtio_input(void) {
         }
     }
 
-    // Now find the keyboard specifically
+    // Now find the keyboard specifically (not tablet!)
     for (int i = 0; i < 32; i++) {
         volatile uint32_t *base = (volatile uint32_t *)(VIRTIO_MMIO_BASE + i * VIRTIO_MMIO_STRIDE);
         volatile uint8_t *base8 = (volatile uint8_t *)(VIRTIO_MMIO_BASE + i * VIRTIO_MMIO_STRIDE);
@@ -223,15 +223,26 @@ static volatile uint32_t *find_virtio_input(void) {
             base8[VIRTIO_INPUT_CFG_SUBSEL] = 0;
             mb();
 
-            // Check first few chars for "keyboard" or "QEMU"
-            char name[16] = {0};
+            // Read full name
+            char name[32] = {0};
             uint8_t size = base8[VIRTIO_INPUT_CFG_SIZE];
-            for (int j = 0; j < 15 && j < size; j++) {
+            for (int j = 0; j < 31 && j < size; j++) {
                 name[j] = base8[VIRTIO_INPUT_CFG_DATA + j];
             }
 
-            // Accept any virtio-input for now, but prefer keyboard
-            if (name[0] == 'Q' || name[0] == 'k' || name[0] == 'K') {
+            // Look for "Keyboard" in the name (QEMU Virtio Keyboard)
+            // Skip if it's a Tablet
+            int is_keyboard = 0;
+            for (int j = 0; name[j] && name[j+7]; j++) {
+                if (name[j] == 'K' && name[j+1] == 'e' && name[j+2] == 'y' &&
+                    name[j+3] == 'b' && name[j+4] == 'o' && name[j+5] == 'a' &&
+                    name[j+6] == 'r' && name[j+7] == 'd') {
+                    is_keyboard = 1;
+                    break;
+                }
+            }
+
+            if (is_keyboard) {
                 printf("[KBD] Selected: %s (device %d)\n", name, i);
                 kbd_device_index = i;
                 return base;

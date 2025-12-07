@@ -17,6 +17,7 @@
 #include "initramfs.h"
 #include "kapi.h"
 #include "virtio_blk.h"
+#include "mouse.h"
 
 // QEMU virt machine PL011 UART base address
 #define UART0_BASE 0x09000000
@@ -33,6 +34,13 @@ void uart_putc(char c) {
         asm volatile("nop");
     }
     UART_DR = c;
+}
+
+void uart_puts(const char *s) {
+    while (*s) {
+        if (*s == '\n') uart_putc('\r');
+        uart_putc(*s++);
+    }
 }
 
 int uart_getc(void) {
@@ -129,6 +137,9 @@ void kernel_main(void) {
 
     // Initialize keyboard (polling mode)
     keyboard_init();
+
+    // Initialize mouse (for GUI)
+    mouse_init();
 
     // Initialize block device (for persistent storage)
     virtio_blk_init();

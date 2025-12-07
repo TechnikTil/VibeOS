@@ -24,7 +24,7 @@ KERNEL_C_SRCS = $(wildcard $(KERNEL_DIR)/*.c)
 KERNEL_S_SRCS = $(wildcard $(KERNEL_DIR)/*.S)
 
 # Userspace programs to build and install to disk
-USER_PROGS = snake tetris
+USER_PROGS = snake tetris desktop
 
 # Object files
 BOOT_OBJ = $(BUILD_DIR)/boot.o
@@ -52,9 +52,9 @@ USER_LDFLAGS = -nostdlib -T user/linker.ld
 
 # QEMU settings
 QEMU = qemu-system-aarch64
-# Graphical mode with virtio-keyboard and virtio-blk disk
+# Graphical mode with virtio-keyboard, virtio-tablet (mouse), and virtio-blk disk
 # Use force-legacy=false to get modern virtio (version 2) which is easier to program
-QEMU_FLAGS = -M virt -cpu cortex-a72 -m 256M -global virtio-mmio.force-legacy=false -device ramfb -device virtio-blk-device,drive=hd0 -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 -device virtio-keyboard-device -serial stdio -kernel $(KERNEL_BIN)
+QEMU_FLAGS = -M virt -cpu cortex-a72 -m 256M -global virtio-mmio.force-legacy=false -device ramfb -device virtio-blk-device,drive=hd0 -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 -device virtio-keyboard-device -device virtio-tablet-device -serial stdio -kernel $(KERNEL_BIN)
 # No-graphics mode (terminal only) - no keyboard in nographic mode
 QEMU_FLAGS_NOGRAPHIC = -M virt -cpu cortex-a72 -m 256M -global virtio-mmio.force-legacy=false -device virtio-blk-device,drive=hd0 -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 -nographic -kernel $(KERNEL_BIN)
 

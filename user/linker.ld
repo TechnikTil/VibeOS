@@ -11,7 +11,7 @@ PHDRS
 
 SECTIONS
 {
-    . = 0x40200000;
+    . = 0x40400000;  /* 4MB into RAM - leaves room for kernel heap */
 
     .text : {
         *(.text.start)
