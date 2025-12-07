@@ -37,8 +37,8 @@ int elf_validate(const void *data, size_t size) {
         return -5;
     }
 
-    // Check type (executable)
-    if (ehdr->e_type != ET_EXEC) {
+    // Check type (executable or PIE)
+    if (ehdr->e_type != ET_EXEC && ehdr->e_type != ET_DYN) {
         return -6;
     }
 
@@ -99,4 +99,95 @@ uint64_t elf_load(const void *data, size_t size) {
            code[0], code[1], code[2], code[3]);
 
     return ehdr->e_entry;
+}
+
+// Calculate total memory size needed for all LOAD segments
+uint64_t elf_calc_size(const void *data, size_t size) {
+    int valid = elf_validate(data, size);
+    if (valid != 0) return 0;
+
+    const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)data;
+    const uint8_t *base = (const uint8_t *)data;
+
+    uint64_t min_addr = (uint64_t)-1;
+    uint64_t max_addr = 0;
+
+    for (int i = 0; i < ehdr->e_phnum; i++) {
+        const Elf64_Phdr *phdr = (const Elf64_Phdr *)(base + ehdr->e_phoff + i * ehdr->e_phentsize);
+        if (phdr->p_type != PT_LOAD) continue;
+
+        if (phdr->p_vaddr < min_addr) {
+            min_addr = phdr->p_vaddr;
+        }
+        uint64_t end = phdr->p_vaddr + phdr->p_memsz;
+        if (end > max_addr) {
+            max_addr = end;
+        }
+    }
+
+    if (max_addr <= min_addr) return 0;
+    return max_addr - min_addr;
+}
+
+// Load ELF at a specific base address
+int elf_load_at(const void *data, size_t size, uint64_t load_base, elf_load_info_t *info) {
+    int valid = elf_validate(data, size);
+    if (valid != 0) {
+        printf("[ELF] Invalid ELF: error %d\n", valid);
+        return -1;
+    }
+
+    const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *)data;
+    const uint8_t *base = (const uint8_t *)data;
+    int is_pie = (ehdr->e_type == ET_DYN);
+
+    printf("[ELF] Loading %s at 0x%lx (%d program headers)\n",
+           is_pie ? "PIE" : "EXEC", load_base, ehdr->e_phnum);
+
+    uint64_t total_size = 0;
+
+    // Process program headers
+    for (int i = 0; i < ehdr->e_phnum; i++) {
+        const Elf64_Phdr *phdr = (const Elf64_Phdr *)(base + ehdr->e_phoff + i * ehdr->e_phentsize);
+
+        if (phdr->p_type != PT_LOAD) continue;
+
+        // For PIE, add load_base to vaddr
+        // For EXEC, use vaddr as-is
+        uint64_t dest_addr = is_pie ? (load_base + phdr->p_vaddr) : phdr->p_vaddr;
+
+        printf("[ELF] LOAD: vaddr=0x%lx -> 0x%lx filesz=0x%lx memsz=0x%lx\n",
+               phdr->p_vaddr, dest_addr, phdr->p_filesz, phdr->p_memsz);
+
+        void *dest = (void *)dest_addr;
+        const void *src = base + phdr->p_offset;
+
+        // Copy file contents
+        if (phdr->p_filesz > 0) {
+            memcpy(dest, src, phdr->p_filesz);
+        }
+
+        // Zero BSS
+        if (phdr->p_memsz > phdr->p_filesz) {
+            memset((uint8_t *)dest + phdr->p_filesz, 0,
+                   phdr->p_memsz - phdr->p_filesz);
+        }
+
+        uint64_t seg_end = phdr->p_vaddr + phdr->p_memsz;
+        if (seg_end > total_size) total_size = seg_end;
+    }
+
+    // Calculate entry point
+    uint64_t entry = is_pie ? (load_base + ehdr->e_entry) : ehdr->e_entry;
+
+    printf("[ELF] Entry point: 0x%lx\n", entry);
+
+    // Fill info struct
+    if (info) {
+        info->entry = entry;
+        info->load_base = load_base;
+        info->load_size = total_size;
+    }
+
+    return 0;
 }

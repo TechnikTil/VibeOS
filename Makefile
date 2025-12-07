@@ -46,9 +46,9 @@ CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=cortex-a72 -mgeneral-regs-
 ASFLAGS = -mcpu=cortex-a72
 LDFLAGS = -nostdlib -T linker.ld
 
-# Userspace compiler flags
-USER_CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=cortex-a72 -mgeneral-regs-only -Wall -Wextra -O2 -I$(USER_DIR)/lib
-USER_LDFLAGS = -nostdlib -T user/linker.ld
+# Userspace compiler flags (PIE for position-independent loading)
+USER_CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=cortex-a72 -mgeneral-regs-only -fPIE -Wall -Wextra -O2 -I$(USER_DIR)/lib
+USER_LDFLAGS = -nostdlib -pie -T user/linker.ld
 
 # QEMU settings
 QEMU = qemu-system-aarch64

@@ -47,7 +47,9 @@ typedef struct {
 
     // Process
     void (*exit)(int status);
-    int  (*exec)(const char *path);   // Run another program
+    int  (*exec)(const char *path);   // Run another program (waits for completion)
+    void (*yield)(void);              // Give up CPU to other processes
+    int  (*spawn)(const char *path);  // Start a new process (returns immediately)
 
     // Framebuffer (for GUI programs)
     uint32_t *fb_base;               // Direct framebuffer pointer

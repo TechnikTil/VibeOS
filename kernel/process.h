@@ -1,5 +1,8 @@
 /*
  * VibeOS Process Management
+ *
+ * Cooperative multitasking - programs call yield() voluntarily.
+ * Classic Mac OS / Windows 3.1 style.
  */
 
 #ifndef PROCESS_H
@@ -9,29 +12,72 @@
 #include <stddef.h>
 
 #define PROCESS_NAME_MAX 32
-#define PROCESS_STACK_SIZE 0x4000  // 16KB per process
+#define PROCESS_STACK_SIZE 0x10000  // 64KB per process
+#define MAX_PROCESSES 16
+
+// Process states
+typedef enum {
+    PROC_STATE_FREE = 0,     // Slot available
+    PROC_STATE_READY,        // Ready to run
+    PROC_STATE_RUNNING,      // Currently executing
+    PROC_STATE_BLOCKED,      // Waiting for something
+    PROC_STATE_ZOMBIE        // Exited, waiting to be cleaned up
+} proc_state_t;
+
+// Saved CPU context for context switching
+typedef struct {
+    uint64_t x19, x20, x21, x22, x23, x24, x25, x26, x27, x28;
+    uint64_t x29;  // Frame pointer
+    uint64_t x30;  // Link register (return address)
+    uint64_t sp;   // Stack pointer
+} cpu_context_t;
 
 typedef struct process {
     int pid;
     char name[PROCESS_NAME_MAX];
-    uint64_t entry;           // Entry point
-    uint64_t sp;              // Stack pointer
+    proc_state_t state;
+
+    // Memory
+    uint64_t load_base;       // Where program code is loaded
+    uint64_t load_size;       // Size of loaded code
     void *stack_base;         // Stack allocation base
+    uint64_t stack_size;      // Stack size
+
+    // Execution
+    uint64_t entry;           // Entry point
+    cpu_context_t context;    // Saved registers for context switch
+
+    // Exit
     int exit_status;
-    int running;
+    int parent_pid;           // Who spawned us
 } process_t;
 
 // Initialize process subsystem
 void process_init(void);
 
-// Execute an ELF binary from VFS path
+// Create a new process from ELF path (does NOT start it yet)
+int process_create(const char *path, int argc, char **argv);
+
+// Start a created process (makes it ready to run)
+int process_start(int pid);
+
+// Execute and wait (old behavior - run to completion)
 int process_exec(const char *path);
 int process_exec_args(const char *path, int argc, char **argv);
 
 // Exit current process
 void process_exit(int status);
 
-// Get current process
+// Get current/specific process
 process_t *process_current(void);
+process_t *process_get(int pid);
+
+// Scheduling
+void process_yield(void);              // Give up CPU voluntarily
+void process_schedule(void);           // Pick next process to run
+int process_count_ready(void);         // Count runnable processes
+
+// Context switch (implemented in assembly)
+void context_switch(cpu_context_t *old_ctx, cpu_context_t *new_ctx);
 
 #endif

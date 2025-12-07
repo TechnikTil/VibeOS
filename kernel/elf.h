@@ -66,6 +66,14 @@ typedef struct {
 
 // ELF types
 #define ET_EXEC 2
+#define ET_DYN  3  // Shared object / PIE
+
+// Info about a loaded program
+typedef struct {
+    uint64_t entry;       // Entry point (absolute address)
+    uint64_t load_base;   // Where it was loaded
+    uint64_t load_size;   // Total size in memory
+} elf_load_info_t;
 
 // Validate ELF header, returns 0 if valid
 int elf_validate(const void *data, size_t size);
@@ -74,6 +82,14 @@ int elf_validate(const void *data, size_t size);
 uint64_t elf_entry(const void *data);
 
 // Load ELF segments into memory, returns entry point or 0 on failure
+// DEPRECATED: use elf_load_at instead
 uint64_t elf_load(const void *data, size_t size);
+
+// Load ELF at a specific base address (for PIE binaries)
+// Returns 0 on success, fills info struct
+int elf_load_at(const void *data, size_t size, uint64_t base, elf_load_info_t *info);
+
+// Calculate total memory size needed for ELF
+uint64_t elf_calc_size(const void *data, size_t size);
 
 #endif

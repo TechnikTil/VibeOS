@@ -1,7 +1,9 @@
 /*
  * VibeOS Process Management
  *
- * Win3.1 style - programs run in kernel space and call kernel functions directly.
+ * Cooperative multitasking - Win3.1/Classic Mac style.
+ * Programs run in kernel space and call kernel functions directly.
+ * No memory protection, no preemption.
  */
 
 #include "process.h"
@@ -13,45 +15,305 @@
 #include "kapi.h"
 #include <stddef.h>
 
-// For now, just one process at a time (simple single-tasking)
-static process_t current_proc;
+// Process table
+static process_t proc_table[MAX_PROCESSES];
+static int current_pid = -1;  // -1 means kernel/shell is running
 static int next_pid = 1;
 
-// Program entry point signature: int main(kapi_t *api, int argc, char **argv)
+// Program load address - grows upward as we load programs
+// Start after kernel heap has some room
+#define PROGRAM_BASE 0x41000000  // 16MB into RAM
+static uint64_t next_load_addr = PROGRAM_BASE;
+
+// Align to 64KB boundary for cleaner loading
+#define ALIGN_64K(x) (((x) + 0xFFFF) & ~0xFFFFULL)
+
+// Program entry point signature
 typedef int (*program_entry_t)(kapi_t *api, int argc, char **argv);
 
+// Forward declaration
+static void process_entry_wrapper(void);
+
 void process_init(void) {
-    memset(&current_proc, 0, sizeof(current_proc));
-    printf("[PROC] Process subsystem initialized\n");
+    // Clear process table
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        proc_table[i].state = PROC_STATE_FREE;
+        proc_table[i].pid = 0;
+    }
+    current_pid = -1;
+    next_pid = 1;
+    next_load_addr = PROGRAM_BASE;
+    printf("[PROC] Process subsystem initialized (max %d processes)\n", MAX_PROCESSES);
+}
+
+// Find a free slot in the process table
+static int find_free_slot(void) {
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (proc_table[i].state == PROC_STATE_FREE) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 process_t *process_current(void) {
-    return current_proc.running ? &current_proc : NULL;
+    if (current_pid < 0) return NULL;
+    return &proc_table[current_pid];
 }
 
-// Called when process wants to exit explicitly via kapi.exit()
-void process_exit(int status) {
-    printf("[PROC] Process '%s' (pid %d) exited with status %d\n",
-           current_proc.name, current_proc.pid, status);
+process_t *process_get(int pid) {
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (proc_table[i].pid == pid && proc_table[i].state != PROC_STATE_FREE) {
+            return &proc_table[i];
+        }
+    }
+    return NULL;
+}
 
-    current_proc.exit_status = status;
-    current_proc.running = 0;
+int process_count_ready(void) {
+    int count = 0;
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (proc_table[i].state == PROC_STATE_READY ||
+            proc_table[i].state == PROC_STATE_RUNNING) {
+            count++;
+        }
+    }
+    return count;
+}
 
-    // Free process stack
-    if (current_proc.stack_base) {
-        free(current_proc.stack_base);
-        current_proc.stack_base = NULL;
+// Create a new process (load the binary but don't start it)
+int process_create(const char *path, int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+
+    // Find free slot
+    int slot = find_free_slot();
+    if (slot < 0) {
+        printf("[PROC] No free process slots\n");
+        return -1;
     }
 
-    // Note: With direct function calls, programs should just return from main().
-    // This exit function is here for programs that want to exit early.
-    // Since we can't easily longjmp back, calling exit() will hang.
-    // TODO: Implement proper early exit if needed
-    while (1) {}
+    // Look up file
+    vfs_node_t *file = vfs_lookup(path);
+    if (!file) {
+        printf("[PROC] File not found: %s\n", path);
+        return -1;
+    }
+
+    if (vfs_is_dir(file)) {
+        printf("[PROC] Cannot exec directory: %s\n", path);
+        return -1;
+    }
+
+    size_t size = file->size;
+    if (size == 0) {
+        printf("[PROC] File is empty: %s\n", path);
+        return -1;
+    }
+
+    // Read the ELF file
+    char *data = malloc(size);
+    if (!data) {
+        printf("[PROC] Out of memory reading %s\n", path);
+        return -1;
+    }
+
+    int bytes = vfs_read(file, data, size, 0);
+    if (bytes != (int)size) {
+        printf("[PROC] Failed to read %s\n", path);
+        free(data);
+        return -1;
+    }
+
+    // Calculate how much memory the program needs
+    uint64_t prog_size = elf_calc_size(data, size);
+    if (prog_size == 0) {
+        printf("[PROC] Invalid ELF: %s\n", path);
+        free(data);
+        return -1;
+    }
+
+    // Align load address
+    uint64_t load_addr = ALIGN_64K(next_load_addr);
+
+    // Load the ELF at this address
+    elf_load_info_t info;
+    if (elf_load_at(data, size, load_addr, &info) != 0) {
+        printf("[PROC] Failed to load ELF: %s\n", path);
+        free(data);
+        return -1;
+    }
+
+    free(data);
+
+    // Update next load address for future programs
+    next_load_addr = ALIGN_64K(load_addr + info.load_size + 0x10000);
+
+    // Set up process structure
+    process_t *proc = &proc_table[slot];
+    proc->pid = next_pid++;
+    strncpy(proc->name, path, PROCESS_NAME_MAX - 1);
+    proc->name[PROCESS_NAME_MAX - 1] = '\0';
+    proc->state = PROC_STATE_READY;
+    proc->load_base = info.load_base;
+    proc->load_size = info.load_size;
+    proc->entry = info.entry;
+    proc->parent_pid = current_pid;
+    proc->exit_status = 0;
+
+    // Allocate stack
+    proc->stack_size = PROCESS_STACK_SIZE;
+    proc->stack_base = malloc(proc->stack_size);
+    if (!proc->stack_base) {
+        printf("[PROC] Failed to allocate stack\n");
+        proc->state = PROC_STATE_FREE;
+        return -1;
+    }
+
+    // Initialize context
+    // Stack grows down, SP starts at top (aligned to 16 bytes)
+    uint64_t stack_top = ((uint64_t)proc->stack_base + proc->stack_size) & ~0xFULL;
+
+    // Set up initial context so when we switch to this process,
+    // it "returns" to process_entry_wrapper which calls main
+    memset(&proc->context, 0, sizeof(cpu_context_t));
+    proc->context.sp = stack_top;
+    proc->context.x30 = (uint64_t)process_entry_wrapper;  // Return to wrapper
+    proc->context.x19 = proc->entry;    // Pass entry point in callee-saved reg
+    proc->context.x20 = (uint64_t)&kapi; // Pass kapi pointer
+    proc->context.x21 = (uint64_t)argc;  // argc
+    proc->context.x22 = (uint64_t)argv;  // argv
+
+    printf("[PROC] Created process '%s' pid=%d at 0x%lx (slot %d)\n",
+           proc->name, proc->pid, proc->load_base, slot);
+
+    return proc->pid;
 }
 
+// Entry wrapper - called when a new process is switched to for the first time
+// x19 = entry, x20 = kapi, x21 = argc, x22 = argv (set in context)
+static void process_entry_wrapper(void) {
+    // Get parameters from callee-saved registers (set during create)
+    register uint64_t entry asm("x19");
+    register uint64_t kapi_ptr asm("x20");
+    register uint64_t argc asm("x21");
+    register uint64_t argv asm("x22");
+
+    program_entry_t prog_main = (program_entry_t)entry;
+    int result = prog_main((kapi_t *)kapi_ptr, (int)argc, (char **)argv);
+
+    // Process returned - exit
+    process_exit(result);
+}
+
+// Start a process (make it runnable)
+int process_start(int pid) {
+    process_t *proc = process_get(pid);
+    if (!proc) return -1;
+
+    if (proc->state != PROC_STATE_READY) {
+        printf("[PROC] Process %d not ready (state=%d)\n", pid, proc->state);
+        return -1;
+    }
+
+    printf("[PROC] Starting process %d '%s'\n", pid, proc->name);
+    return 0;  // Already ready, scheduler will pick it up
+}
+
+// Exit current process
+void process_exit(int status) {
+    if (current_pid < 0) {
+        printf("[PROC] Exit called with no current process!\n");
+        return;
+    }
+
+    process_t *proc = &proc_table[current_pid];
+    printf("[PROC] Process '%s' (pid %d) exited with status %d\n",
+           proc->name, proc->pid, status);
+
+    proc->exit_status = status;
+    proc->state = PROC_STATE_ZOMBIE;
+
+    // Free stack
+    if (proc->stack_base) {
+        free(proc->stack_base);
+        proc->stack_base = NULL;
+    }
+
+    // TODO: Could reclaim program memory too
+
+    // Mark slot as free (simple cleanup for now)
+    proc->state = PROC_STATE_FREE;
+
+    // Switch to another process or return to kernel
+    current_pid = -1;
+    process_schedule();
+
+    // If schedule returned, no other processes - we're done
+    // This shouldn't happen in normal operation
+}
+
+// Yield - voluntarily give up CPU
+void process_yield(void) {
+    if (current_pid < 0) return;  // Kernel can't yield
+
+    process_t *proc = &proc_table[current_pid];
+    proc->state = PROC_STATE_READY;
+
+    process_schedule();
+}
+
+// Simple round-robin scheduler
+void process_schedule(void) {
+    int old_pid = current_pid;
+    process_t *old_proc = (old_pid >= 0) ? &proc_table[old_pid] : NULL;
+
+    // Find next runnable process (round-robin)
+    int start = (old_pid >= 0) ? old_pid + 1 : 0;
+    int next = -1;
+
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        int idx = (start + i) % MAX_PROCESSES;
+        if (proc_table[idx].state == PROC_STATE_READY) {
+            next = idx;
+            break;
+        }
+    }
+
+    if (next < 0) {
+        // No runnable processes
+        if (old_pid >= 0 && old_proc->state == PROC_STATE_RUNNING) {
+            // Current process still running, keep it
+            return;
+        }
+        // Return to kernel
+        current_pid = -1;
+        return;
+    }
+
+    if (next == old_pid && old_proc && old_proc->state == PROC_STATE_RUNNING) {
+        // Same process, nothing to do
+        return;
+    }
+
+    // Switch to new process
+    process_t *new_proc = &proc_table[next];
+
+    if (old_proc && old_proc->state == PROC_STATE_RUNNING) {
+        old_proc->state = PROC_STATE_READY;
+    }
+
+    new_proc->state = PROC_STATE_RUNNING;
+    current_pid = next;
+
+    // Context switch!
+    cpu_context_t *old_ctx = old_proc ? &old_proc->context : NULL;
+    context_switch(old_ctx, &new_proc->context);
+}
+
+// Execute and wait - the simple single-process mode (for compatibility)
 int process_exec_args(const char *path, int argc, char **argv) {
-    // Look up file in VFS
+    // Look up file
     vfs_node_t *file = vfs_lookup(path);
     if (!file) {
         printf("[PROC] exec: '%s' not found\n", path);
@@ -63,7 +325,6 @@ int process_exec_args(const char *path, int argc, char **argv) {
         return -2;
     }
 
-    // Read the entire file
     size_t size = file->size;
     if (size == 0) {
         printf("[PROC] exec: '%s' is empty\n", path);
@@ -83,60 +344,32 @@ int process_exec_args(const char *path, int argc, char **argv) {
         return -5;
     }
 
-    // Validate and load ELF
-    uint64_t entry = elf_load(data, size);
-    free(data);
+    // Calculate load address
+    uint64_t load_addr = ALIGN_64K(next_load_addr);
 
-    if (entry == 0) {
+    // Load ELF
+    elf_load_info_t info;
+    if (elf_load_at(data, size, load_addr, &info) != 0) {
         printf("[PROC] exec: failed to load ELF\n");
+        free(data);
         return -6;
     }
 
-    // Set up process
-    current_proc.pid = next_pid++;
-    strncpy(current_proc.name, path, PROCESS_NAME_MAX - 1);
-    current_proc.name[PROCESS_NAME_MAX - 1] = '\0';
-    current_proc.entry = entry;
+    free(data);
 
-    // Allocate stack
-    current_proc.stack_base = malloc(PROCESS_STACK_SIZE);
-    if (!current_proc.stack_base) {
-        printf("[PROC] exec: failed to allocate stack\n");
-        return -7;
-    }
+    // Update next load address
+    next_load_addr = ALIGN_64K(load_addr + info.load_size + 0x10000);
 
-    // Stack grows down, so SP starts at top
-    current_proc.sp = (uint64_t)current_proc.stack_base + PROCESS_STACK_SIZE;
-    // Align to 16 bytes (required by AArch64 ABI)
-    current_proc.sp &= ~0xFUL;
+    printf("[PROC] Starting '%s' at 0x%lx\n", path, info.entry);
 
-    current_proc.running = 1;
-
-    printf("[PROC] Starting '%s' (pid %d) at 0x%lx\n",
-           current_proc.name, current_proc.pid, entry);
-
-    // Call program directly - it's just a function!
-    // Entry point is: int main(kapi_t *api, int argc, char **argv)
-    program_entry_t prog_main = (program_entry_t)entry;
-    printf("[PROC] Calling program at %p with kapi at %p, argc=%d\n", (void*)prog_main, (void*)&kapi, argc);
+    // Call directly (single-process mode)
+    program_entry_t prog_main = (program_entry_t)info.entry;
     int result = prog_main(&kapi, argc, argv);
-    printf("[PROC] Program returned!\n");
 
-    // Program returned normally
-    current_proc.running = 0;
-    current_proc.exit_status = result;
-
-    // Free stack
-    if (current_proc.stack_base) {
-        free(current_proc.stack_base);
-        current_proc.stack_base = NULL;
-    }
-
-    printf("[PROC] Process '%s' returned %d\n", current_proc.name, result);
+    printf("[PROC] Process '%s' returned %d\n", path, result);
     return result;
 }
 
-// Wrapper for exec without arguments
 int process_exec(const char *path) {
     char *argv[1] = { (char *)path };
     return process_exec_args(path, 1, argv);

@@ -12,7 +12,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - **Human**: Vibes only. Yells "fuck yeah" when things work. Cannot provide technical guidance.
 - **Claude**: Full technical lead. Makes all architecture decisions. Wozniak energy.
 
-## Current State (Last Updated: Session 7)
+## Current State (Last Updated: Session 9)
 - [x] Bootloader (boot/boot.S) - Sets up stack, clears BSS, jumps to kernel
 - [x] Minimal kernel (kernel/kernel.c) - UART output working
 - [x] Linker script (linker.ld) - Memory layout for QEMU virt
@@ -28,8 +28,9 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - [x] Shell (kernel/shell.c) - In-kernel shell with commands
 - [x] VFS (kernel/vfs.c) - Now backed by FAT32, falls back to in-memory
 - [x] Coreutils - ls, cd, pwd, mkdir, touch, cat, echo (with > redirect)
-- [x] ELF loader (kernel/elf.c) - Can load/run ELF binaries
-- [x] Process exec (kernel/process.c) - Win3.1 style, programs call kernel directly via kapi
+- [x] ELF loader (kernel/elf.c) - Loads PIE binaries at dynamic addresses
+- [x] Process management (kernel/process.c) - Process table, context switching, scheduler
+- [x] Cooperative multitasking - yield(), spawn() in kapi, round-robin scheduler
 - [x] Kernel API (kernel/kapi.c) - Function pointers for programs to call kernel
 - [x] Text editor (kernel/vi.c) - Modal vi clone with normal/insert/command modes
 - [x] Virtio block device (kernel/virtio_blk.c) - Read/write disk sectors
@@ -83,7 +84,7 @@ Phase 4: GUI (IN PROGRESS)
 - 0x0A000000: RTC
 - 0x0A003E00: Virtio keyboard (device 31)
 - 0x40000000+: RAM (we load here)
-- 0x40400000: Program load address (moved from 0x40200000 to avoid heap overlap)
+- 0x41000000+: Program load area (dynamically allocated by kernel)
 
 ### Key Files
 - boot/boot.S - Entry point, CPU init, BSS clear
@@ -100,8 +101,9 @@ Phase 4: GUI (IN PROGRESS)
 - kernel/shell.c/.h - In-kernel shell with all commands
 - kernel/vfs.c/.h - Virtual filesystem (backed by FAT32 or in-memory)
 - kernel/vi.c/.h - Modal text editor (vi clone)
-- kernel/elf.c/.h - ELF64 loader
-- kernel/process.c/.h - Process execution
+- kernel/elf.c/.h - ELF64 loader (supports PIE binaries)
+- kernel/process.c/.h - Process table, scheduler, context switching
+- kernel/context.S - Assembly context switch routine
 - kernel/kapi.c/.h - Kernel API for programs
 - kernel/initramfs.c/.h - Binary embedding (currently unused)
 - linker.ld - Memory layout
@@ -112,7 +114,7 @@ Phase 4: GUI (IN PROGRESS)
 - user/lib/vibe.h - Userspace library header
 - user/lib/crt0.S - C runtime startup
 - user/bin/*.c - Program sources
-- user/linker.ld - Program linker script
+- user/linker.ld - Program linker script (PIE, base at 0x0)
 
 ### Build & Run
 ```bash
@@ -161,8 +163,9 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
 | Component | Decision | Notes |
 |-----------|----------|-------|
 | Kernel | Monolithic | Everything in kernel space, Win3.1-style |
-| Programs | Disk-based | Games/GUI in /bin, shell commands built-in |
+| Programs | PIE on disk | Loaded dynamically at runtime, kernel picks address |
 | Memory | Flat (no MMU) | No virtual memory, shared address space |
+| Multitasking | Cooperative | Programs call yield(), round-robin scheduler |
 | Filesystem | FAT32 on virtio-blk | Persistent, mountable on host, read/write |
 | Shell | POSIX-ish | Familiar syntax, basic redirects |
 | RAM | 256MB | Configurable |
@@ -186,8 +189,9 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
 - **FAT32 minimum size**: FAT32 requires at least ~33MB. Use 64MB disk image.
 - **Virtio-blk polling**: Save `used->idx` before submitting request, then poll until it changes. Don't use a global `last_used_idx` that persists across requests.
 - **Virtio-input device detection**: Both keyboard and tablet are virtio-input. Must check device name contains "Keyboard" specifically, not just starts with "Q".
-- **Heap vs program memory overlap**: Large heap allocations can overlap with program load address. Programs currently load at fixed 0x40400000. TODO: implement proper dynamic loading.
 - **Userspace has no stdint.h**: Use `unsigned long` instead of `uint64_t` in user programs, or define types in vibe.h.
+- **PIE on AArch64**: Use `-fPIE` and `-pie` flags. AArch64 uses PC-relative addressing (ADRP+ADD) so no runtime relocations needed.
+- **Context switch**: Only need to save callee-saved registers (x19-x30, sp). Caller-saved regs are already on stack.
 
 ## Session Log
 ### Session 1
@@ -273,5 +277,23 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
 - Fixed heap/program memory overlap bug:
   - Backbuffer allocation (~2MB) was overlapping program load address
   - Moved program load address from 0x40200000 to 0x40400000
-  - **TODO**: Implement proper dynamic loading (programs shouldn't have hardcoded addresses)
 - **Achievement**: GUI desktop environment working!
+
+### Session 9
+- Implemented dynamic program loading - no more hardcoded addresses!
+- Converted userspace programs to PIE (Position Independent Executables)
+  - Updated user/linker.ld to base at 0x0
+  - Added `-fPIE` and `-pie` compiler/linker flags
+- Enhanced ELF loader:
+  - elf_load_at() loads PIE binaries at any address
+  - elf_calc_size() calculates memory requirements
+  - Supports both ET_EXEC and ET_DYN types
+- Built cooperative multitasking infrastructure:
+  - Process table (MAX_PROCESSES = 16)
+  - Process states: FREE, READY, RUNNING, BLOCKED, ZOMBIE
+  - Round-robin scheduler
+  - Context switching in assembly (kernel/context.S)
+  - yield() and spawn() added to kapi
+- Programs now load at 0x41000000+ with kernel picking addresses dynamically
+- Tested: desktop→snake→tetris→desktop all load at different addresses
+- **Achievement**: Dynamic loading and multitasking foundation complete!
