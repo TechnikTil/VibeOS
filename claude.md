@@ -12,7 +12,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - **Human**: Vibes only. Yells "fuck yeah" when things work. Cannot provide technical guidance.
 - **Claude**: Full technical lead. Makes all architecture decisions. Wozniak energy.
 
-## Current State (Last Updated: Session 6)
+## Current State (Last Updated: Session 7)
 - [x] Bootloader (boot/boot.S) - Sets up stack, clears BSS, jumps to kernel
 - [x] Minimal kernel (kernel/kernel.c) - UART output working
 - [x] Linker script (linker.ld) - Memory layout for QEMU virt
@@ -33,7 +33,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - [x] Kernel API (kernel/kapi.c) - Function pointers for programs to call kernel
 - [x] Text editor (kernel/vi.c) - Modal vi clone with normal/insert/command modes
 - [x] Virtio block device (kernel/virtio_blk.c) - Read/write disk sectors
-- [x] FAT32 filesystem (kernel/fat32.c) - Read-only, supports long filenames
+- [x] FAT32 filesystem (kernel/fat32.c) - Read/write, supports long filenames
 - [x] Persistent storage - 64MB FAT32 disk image, mountable on macOS
 - [ ] Interrupts - GIC/timer code exists but disabled (breaks virtio - unknown bug)
 
@@ -94,7 +94,7 @@ Phase 4: GUI (Future)
 - kernel/font.c/.h - Bitmap font
 - kernel/keyboard.c/.h - Virtio keyboard driver
 - kernel/virtio_blk.c/.h - Virtio block device driver
-- kernel/fat32.c/.h - FAT32 filesystem driver (read-only)
+- kernel/fat32.c/.h - FAT32 filesystem driver (read/write)
 - kernel/shell.c/.h - In-kernel shell with all commands
 - kernel/vfs.c/.h - Virtual filesystem (backed by FAT32 or in-memory)
 - kernel/vi.c/.h - Modal text editor (vi clone)
@@ -161,7 +161,7 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
 | Kernel | Monolithic | Everything in kernel space, Win3.1-style |
 | Programs | Built-in | All commands in shell, no external binaries |
 | Memory | Flat (no MMU) | No virtual memory, shared address space |
-| Filesystem | FAT32 on virtio-blk | Persistent, mountable on host, read-only for now |
+| Filesystem | FAT32 on virtio-blk | Persistent, mountable on host, read/write |
 | Shell | POSIX-ish | Familiar syntax, basic redirects |
 | RAM | 256MB | Configurable |
 | Disk | 64MB FAT32 | Persistent storage via virtio-blk |
@@ -236,3 +236,17 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
 - Disk image is mountable on macOS with `hdiutil attach disk.img`
 - Can now put binaries on disk and load them at runtime (solves the 6-binary limit!)
 - **Achievement**: Persistent filesystem working! Files survive reboots!
+
+### Session 7
+- Made FAT32 filesystem writable!
+- Added FAT table write support (fat_set_cluster) - updates both FAT copies
+- Added cluster allocation (fat_alloc_cluster) - finds free clusters
+- Added cluster chain freeing (fat_free_chain)
+- Implemented fat32_create_file() - create empty files
+- Implemented fat32_mkdir() - create directories with . and .. entries
+- Implemented fat32_write_file() - write data to files, handles cluster allocation
+- Implemented fat32_delete() - delete files and free their clusters
+- Updated VFS layer to use FAT32 write functions
+- Now mkdir, touch, echo > file all persist to disk!
+- Files created in VibeOS are visible when mounting disk.img on macOS
+- **Achievement**: Full read/write persistent filesystem!

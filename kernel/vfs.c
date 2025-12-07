@@ -1,7 +1,7 @@
 /*
  * VibeOS Virtual File System
  *
- * Now backed by FAT32 on persistent storage.
+ * Now backed by FAT32 on persistent storage with read/write support.
  * Falls back to in-memory if no disk is available.
  */
 
@@ -430,9 +430,23 @@ int vfs_readdir(vfs_node_t *dir, int index, char *name, size_t name_size, uint8_
 
 vfs_node_t *vfs_mkdir(const char *path) {
     if (use_fat32) {
-        // FAT32 write not implemented yet
-        printf("mkdir: read-only filesystem\n");
-        return NULL;
+        // Build full path
+        char fullpath[VFS_MAX_PATH];
+        if (path[0] == '/') {
+            strncpy(fullpath, path, VFS_MAX_PATH - 1);
+            fullpath[VFS_MAX_PATH - 1] = '\0';
+        } else {
+            if (strcmp(cwd_path, "/") == 0) {
+                snprintf(fullpath, VFS_MAX_PATH, "/%s", path);
+            } else {
+                snprintf(fullpath, VFS_MAX_PATH, "%s/%s", cwd_path, path);
+            }
+        }
+
+        if (fat32_mkdir(fullpath) < 0) {
+            return NULL;
+        }
+        return vfs_lookup(path);
     }
 
     // In-memory mkdir
@@ -475,9 +489,23 @@ vfs_node_t *vfs_mkdir(const char *path) {
 
 vfs_node_t *vfs_create(const char *path) {
     if (use_fat32) {
-        // FAT32 write not implemented yet
-        printf("create: read-only filesystem\n");
-        return NULL;
+        // Build full path
+        char fullpath[VFS_MAX_PATH];
+        if (path[0] == '/') {
+            strncpy(fullpath, path, VFS_MAX_PATH - 1);
+            fullpath[VFS_MAX_PATH - 1] = '\0';
+        } else {
+            if (strcmp(cwd_path, "/") == 0) {
+                snprintf(fullpath, VFS_MAX_PATH, "/%s", path);
+            } else {
+                snprintf(fullpath, VFS_MAX_PATH, "%s/%s", cwd_path, path);
+            }
+        }
+
+        if (fat32_create_file(fullpath) < 0) {
+            return NULL;
+        }
+        return vfs_lookup(path);
     }
 
     if (!path || !path[0]) return NULL;
@@ -568,8 +596,11 @@ int vfs_write(vfs_node_t *file, const char *buf, size_t size) {
     }
 
     if (use_fat32) {
-        printf("write: read-only filesystem\n");
-        return -1;
+        // Get path from node
+        const char *filepath = (const char *)file->data;
+        if (!filepath) return -1;
+
+        return fat32_write_file(filepath, buf, size);
     }
 
     // In-memory write
@@ -596,8 +627,32 @@ int vfs_append(vfs_node_t *file, const char *buf, size_t size) {
     }
 
     if (use_fat32) {
-        printf("append: read-only filesystem\n");
-        return -1;
+        // Get path from node
+        const char *filepath = (const char *)file->data;
+        if (!filepath) return -1;
+
+        // For append, we need to read existing content, add new data, and write back
+        int file_size = fat32_file_size(filepath);
+        if (file_size < 0) file_size = 0;
+
+        char *new_buf = malloc(file_size + size);
+        if (!new_buf) return -1;
+
+        // Read existing content
+        if (file_size > 0) {
+            if (fat32_read_file(filepath, new_buf, file_size) < 0) {
+                free(new_buf);
+                return -1;
+            }
+        }
+
+        // Append new data
+        memcpy(new_buf + file_size, buf, size);
+
+        // Write back
+        int result = fat32_write_file(filepath, new_buf, file_size + size);
+        free(new_buf);
+        return result >= 0 ? (int)size : -1;
     }
 
     size_t new_size = file->size + size;

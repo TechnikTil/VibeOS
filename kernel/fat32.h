@@ -1,7 +1,7 @@
 /*
  * VibeOS FAT32 Filesystem Driver
  *
- * Read-only FAT32 implementation for persistent storage.
+ * Read/write FAT32 implementation for persistent storage.
  */
 
 #ifndef FAT32_H
@@ -91,5 +91,22 @@ int fat32_list_dir(const char *path, fat32_dir_callback callback, void *user_dat
 
 // Get filesystem info
 fat32_fs_t *fat32_get_fs_info(void);
+
+// Write operations (new!)
+// Create an empty file
+// Returns 0 on success, -1 on error
+int fat32_create_file(const char *path);
+
+// Create a directory
+// Returns 0 on success, -1 on error
+int fat32_mkdir(const char *path);
+
+// Write data to a file (creates if not exists, overwrites if exists)
+// Returns bytes written, or -1 on error
+int fat32_write_file(const char *path, const void *buf, size_t size);
+
+// Delete a file (not directories)
+// Returns 0 on success, -1 on error
+int fat32_delete(const char *path);
 
 #endif
