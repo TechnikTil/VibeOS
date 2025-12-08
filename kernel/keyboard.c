@@ -101,9 +101,9 @@ static int kbd_device_index = -1;  // Which virtio device slot (for IRQ calculat
 #define QUEUE_SIZE 16
 #define DESC_F_WRITE 2
 
-// Key buffer
+// Key buffer (int to support extended keycodes > 127)
 #define KEY_BUF_SIZE 32
-static volatile char key_buffer[KEY_BUF_SIZE];
+static volatile int key_buffer[KEY_BUF_SIZE];
 static volatile int key_buf_read = 0;
 static volatile int key_buf_write = 0;
 
@@ -144,12 +144,33 @@ static const char scancode_to_ascii_shift[128] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
 
-// Shift key scancodes (left shift = 42, right shift = 54)
+// Modifier key scancodes
 #define KEY_LEFTSHIFT  42
 #define KEY_RIGHTSHIFT 54
+#define KEY_LEFTCTRL   29
+#define KEY_RIGHTCTRL  97
 
-// Shift state
+// Arrow key scancodes (Linux input event codes)
+#define KEY_UP_ARROW    103
+#define KEY_LEFT_ARROW  105
+#define KEY_RIGHT_ARROW 106
+#define KEY_DOWN_ARROW  108
+#define KEY_HOME        102
+#define KEY_END         107
+#define KEY_DELETE      111
+
+// Special key codes returned by keyboard_getc() (values >= 128)
+#define SPECIAL_KEY_UP     0x100
+#define SPECIAL_KEY_DOWN   0x101
+#define SPECIAL_KEY_LEFT   0x102
+#define SPECIAL_KEY_RIGHT  0x103
+#define SPECIAL_KEY_HOME   0x104
+#define SPECIAL_KEY_END    0x105
+#define SPECIAL_KEY_DELETE 0x106
+
+// Modifier state
 static int shift_held = 0;
+static int ctrl_held = 0;
 
 // Memory barriers for device communication
 static inline void mb(void) {
@@ -423,23 +444,49 @@ static void process_events(void) {
         if (ev->type == EV_KEY) {
             uint16_t code = ev->code;
 
-            // Track shift key state
+            // Track modifier key state
             if (code == KEY_LEFTSHIFT || code == KEY_RIGHTSHIFT) {
                 shift_held = (ev->value != KEY_RELEASED);
             }
-            // Regular key press
-            else if (ev->value == KEY_PRESSED && code < 128) {
-                char c;
-                if (shift_held) {
-                    c = scancode_to_ascii_shift[code];
-                } else {
-                    c = scancode_to_ascii[code];
+            else if (code == KEY_LEFTCTRL || code == KEY_RIGHTCTRL) {
+                ctrl_held = (ev->value != KEY_RELEASED);
+            }
+            // Key press
+            else if (ev->value == KEY_PRESSED) {
+                int key = 0;
+
+                // Check for special keys first
+                switch (code) {
+                    case KEY_UP_ARROW:    key = SPECIAL_KEY_UP; break;
+                    case KEY_DOWN_ARROW:  key = SPECIAL_KEY_DOWN; break;
+                    case KEY_LEFT_ARROW:  key = SPECIAL_KEY_LEFT; break;
+                    case KEY_RIGHT_ARROW: key = SPECIAL_KEY_RIGHT; break;
+                    case KEY_HOME:        key = SPECIAL_KEY_HOME; break;
+                    case KEY_END:         key = SPECIAL_KEY_END; break;
+                    case KEY_DELETE:      key = SPECIAL_KEY_DELETE; break;
+                    default:
+                        // Regular key
+                        if (code < 128) {
+                            if (shift_held) {
+                                key = scancode_to_ascii_shift[code];
+                            } else {
+                                key = scancode_to_ascii[code];
+                            }
+                            // Apply Ctrl modifier (Ctrl+A = 1, Ctrl+S = 19, etc.)
+                            if (ctrl_held && key >= 'a' && key <= 'z') {
+                                key = key - 'a' + 1;
+                            } else if (ctrl_held && key >= 'A' && key <= 'Z') {
+                                key = key - 'A' + 1;
+                            }
+                        }
+                        break;
                 }
-                if (c != 0) {
+
+                if (key != 0) {
                     // Add to buffer
                     int next = (key_buf_write + 1) % KEY_BUF_SIZE;
                     if (next != key_buf_read) {
-                        key_buffer[key_buf_write] = c;
+                        key_buffer[key_buf_write] = key;
                         key_buf_write = next;
                     }
                 }
@@ -473,7 +520,7 @@ int keyboard_getc(void) {
         return -1;
     }
 
-    char c = key_buffer[key_buf_read];
+    int c = key_buffer[key_buf_read];
     key_buf_read = (key_buf_read + 1) % KEY_BUF_SIZE;
     return c;
 }
