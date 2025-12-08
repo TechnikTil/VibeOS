@@ -42,12 +42,14 @@ DISK_IMG = disk.img
 DISK_SIZE = 64
 
 # Compiler flags - use -O0 everywhere to avoid optimization issues
-CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=cortex-a72 -mgeneral-regs-only -Wall -Wextra -O0 -I$(KERNEL_DIR)
+# Floating point enabled (no -mgeneral-regs-only)
+# Use -mstrict-align to avoid unaligned SIMD accesses
+CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=cortex-a72 -mstrict-align -Wall -Wextra -O0 -I$(KERNEL_DIR)
 ASFLAGS = -mcpu=cortex-a72
 LDFLAGS = -nostdlib -T linker.ld
 
 # Userspace compiler flags (PIE for position-independent loading)
-USER_CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=cortex-a72 -mgeneral-regs-only -fPIE -Wall -Wextra -O0 -I$(USER_DIR)/lib
+USER_CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=cortex-a72 -mstrict-align -fPIE -Wall -Wextra -O0 -I$(USER_DIR)/lib
 USER_LDFLAGS = -nostdlib -pie -T user/linker.ld
 
 # QEMU settings

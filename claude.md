@@ -14,7 +14,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - **Human**: Vibes only. Yells "fuck yeah" when things work. Cannot provide technical guidance.
 - **Claude**: Full technical lead. Makes all architecture decisions. Wozniak energy.
 
-## Current State (Last Updated: Session 23)
+## Current State (Last Updated: Session 24)
 - [x] Bootloader (boot/boot.S) - Sets up stack, clears BSS, jumps to kernel
 - [x] Minimal kernel (kernel/kernel.c) - UART output working
 - [x] Linker script (linker.ld) - Memory layout for QEMU virt
@@ -48,6 +48,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - [x] About dialog - Shows VibeOS version, memory, uptime
 - [x] Power management - WFI-based idle, mouse interrupt-driven, 100Hz UI refresh
 - [x] Virtio Sound - Audio playback via virtio-sound device, WAV file support
+- [x] Floating point - FPU enabled, context switch saves/restores FP regs, calc uses doubles
 
 ## Architecture Decisions Made
 1. **Target**: QEMU virt machine, aarch64, Cortex-A72
@@ -55,7 +56,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 3. **UART**: PL011 at 0x09000000 (QEMU virt default)
 4. **Stack**: 64KB, placed in .stack section after BSS
 5. **Toolchain**: aarch64-elf-gcc (brew install)
-6. **Compiler flags**: -mgeneral-regs-only (no SIMD)
+6. **Compiler flags**: -mstrict-align (prevent unaligned SIMD), FPU enabled
 7. **Process model**: Win3.1 style - no memory protection, programs run in kernel space
 
 ## Roadmap (Terminal-First)
@@ -223,6 +224,10 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
 - **Stack must be above BSS**: As kernel grows, BSS section grows. Stack pointer must be well above BSS end. Originally at 0x40010000, but BSS grew to 0x400290d4 - stack was inside BSS and got zeroed during boot! Moved to 0x40100000 (1MB into RAM).
 - **_data_load must be 8-byte aligned**: AArch64 `ldr x3, [x0]` instruction requires 8-byte alignment. If `_data_load` in linker script is not aligned, boot hangs during .data copy loop. Add `. = ALIGN(8);` before `_data_load = .;`.
 - **Build with -O0 for safety**: GCC optimization causes subtle bugs in OS code - PIE relocations, LFN construction, possibly virtio drivers. Using -O0 everywhere avoids these issues at cost of larger/slower code.
+- **FPU enable**: Set CPACR_EL1.FPEN = 0b11 in boot.S to enable FP/SIMD. Without this, any FP instruction causes an exception.
+- **FP context switch**: When FPU is enabled, context_switch must save/restore q0-q31, fpcr, fpsr. The fp_regs array must be 16-byte aligned (stp/ldp q regs require this). Added padding to cpu_context_t to ensure fp_regs is at offset 0x80.
+- **-mstrict-align required with FPU**: Without -mgeneral-regs-only, GCC uses SIMD for memcpy/struct copies. Some SIMD loads require aligned addresses. Use -mstrict-align to prevent unaligned SIMD access faults.
+- **Kernel stack vs heap collision**: Heap runs from `_bss_end + 0x10000` to `0x41000000`. If kernel stack is inside this range, large allocations (like framebuffer backbuffer) will overwrite the stack. Symptom: local variables corrupted with data like `0x00ffffff` (COLOR_WHITE). Stack was at 0x40100000 (inside heap!). Moved to 0x4F000000 (well above heap and program area).
 
 ## Session Log
 ### Session 1
@@ -625,6 +630,46 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
   - Now files load instantly instead of 7+ seconds
 - **Achievement**: VibeOS can play audio! `play /beep.wav` works!
 
+### Session 24
+- **Floating Point Support - COMPLETE!**
+  - Enabled FPU in boot.S: `mov x0, #(3 << 20); msr cpacr_el1, x0`
+  - Removed `-mgeneral-regs-only` from CFLAGS (was blocking all FP)
+  - Added `-mstrict-align` to prevent unaligned SIMD access faults
+  - GCC now uses SIMD for memcpy/struct ops, which is fine with strict-align
+- **Context switch updated for FP state:**
+  - Extended cpu_context_t: added fpcr, fpsr, _pad, fp_regs[64]
+  - _pad ensures fp_regs is at offset 0x80 (16-byte aligned for stp/ldp q regs)
+  - context.S now saves/restores all 32 Q registers (q0-q31) plus fpcr/fpsr
+- **Calculator now uses floating point:**
+  - Changed display_value/pending_value from int to double
+  - Added decimal point button (replaced C button)
+  - Added float_to_str() for display (no printf %f available)
+  - Clear via 'c'/'C' keyboard key
+  - Can now do: 10 / 3 = 3.333333, 3.14159 * 2, etc.
+- **MAJOR BUG FIX: Kernel stack vs heap collision**
+  - Symptom: Process exit crashed with `0x00ffffff` in return address
+  - Root cause: Kernel stack at 0x40100000 was INSIDE heap range (0x4003c0d4 - 0x41000000)
+  - Large heap allocations (backbuffer) overwrote stack with framebuffer data
+  - Debug showed local variable `old_pid` corrupted from -1 to 0x00ffffff (COLOR_WHITE)
+  - Fix: Moved stack to 0x4F000000, well above heap and program load area
+- **Memory layout clarified:**
+  ```
+  0x40000000 - 0x4002c0d4: Kernel code/data/BSS
+  0x4003c0d4 - 0x41000000: Heap (~13MB)
+  0x41000000 - 0x4E000000: Program load area
+  0x4F000000:              Kernel stack (grows down)
+  0x50000000:              End of 256MB RAM
+  ```
+- **Recurring issue: memory collisions**
+  - This is the 3rd or 4th time we've had stack/heap/BSS overlap bugs
+  - All memory regions use hardcoded magic numbers that aren't coordinated
+  - As kernel grows, these collisions happen more often
+  - **Proper fix**: Use MMU with guard pages - hardware catches violations
+  - **Band-aid fix**: Centralize memory layout in one place with runtime checks
+  - For now, just moved stack way up and documented the layout
+- **Achievement**: Floating point works! Calculator does decimals! Processes exit cleanly!
+
 **NEXT SESSION TODO:**
-- Copy/Paste clipboard support
+- Port minimp3 decoder (now possible with floats!)
+- Build music player UI
 - Maybe DOOM?

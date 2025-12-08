@@ -133,11 +133,21 @@ at_el1:
     mov     w10, #'\n'
     str     w10, [x9]
 
+    // Enable FPU/SIMD (set CPACR_EL1.FPEN = 0b11)
+    mov     w10, #'F'
+    str     w10, [x9]
+    mov     x0, #(3 << 20)        // FPEN bits [21:20] = 0b11
+    msr     cpacr_el1, x0
+    isb
+    mov     w10, #'f'
+    str     w10, [x9]
+
     // Set up the stack pointer (stack grows downward)
-    // Stack is at 1MB into RAM (well above BSS which can grow)
+    // Stack at 0x4F000000 - above heap (ends 0x41000000) and program area
+    // This gives plenty of room and avoids heap/stack collision
     mov     w10, #'S'
     str     w10, [x9]
-    ldr     x0, =0x40100000       // Stack top in RAM (1MB)
+    ldr     x0, =0x4F000000       // Stack top in RAM (above heap and programs)
     mov     sp, x0
     mov     w10, #'s'
     str     w10, [x9]

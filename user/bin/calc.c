@@ -1,7 +1,7 @@
 /*
  * VibeOS Calculator
  *
- * Simple calculator that runs in a desktop window.
+ * Floating-point calculator that runs in a desktop window.
  * Uses the window API to create and manage its window.
  */
 
@@ -12,11 +12,13 @@ static int window_id = -1;
 static uint32_t *win_buffer;
 static int win_w, win_h;
 
-// Calculator state
-static int display_value = 0;
-static int pending_value = 0;
+// Calculator state - now using doubles!
+static double display_value = 0.0;
+static double pending_value = 0.0;
 static char pending_op = 0;
 static int clear_on_digit = 0;
+static int has_decimal = 0;      // Are we entering decimal digits?
+static double decimal_place = 0.1;  // Current decimal place (0.1, 0.01, etc.)
 
 // Button layout
 #define BTN_W 40
@@ -28,7 +30,7 @@ static const char button_labels[4][4][3] = {
     { "7", "8", "9", "/" },
     { "4", "5", "6", "*" },
     { "1", "2", "3", "-" },
-    { "C", "0", "=", "+" }
+    { ".", "0", "=", "+" }
 };
 
 // ============ Drawing Helpers ============
@@ -82,6 +84,65 @@ static void buf_draw_rect(int x, int y, int w, int h, uint32_t color) {
     }
 }
 
+// ============ Float to String ============
+
+// Simple float to string conversion (no sprintf with %f available)
+static void float_to_str(double val, char *buf, int buf_size) {
+    int idx = 0;
+
+    // Handle negative
+    if (val < 0) {
+        buf[idx++] = '-';
+        val = -val;
+    }
+
+    // Get integer part
+    long long int_part = (long long)val;
+    double frac_part = val - (double)int_part;
+
+    // Convert integer part
+    char int_buf[20];
+    int int_idx = 0;
+    if (int_part == 0) {
+        int_buf[int_idx++] = '0';
+    } else {
+        while (int_part > 0 && int_idx < 19) {
+            int_buf[int_idx++] = '0' + (int_part % 10);
+            int_part /= 10;
+        }
+    }
+
+    // Reverse integer part into buffer
+    while (int_idx > 0 && idx < buf_size - 1) {
+        buf[idx++] = int_buf[--int_idx];
+    }
+
+    // Add decimal point and fractional part (up to 6 digits)
+    if (frac_part > 0.0000001 && idx < buf_size - 8) {
+        buf[idx++] = '.';
+
+        int frac_digits = 0;
+        while (frac_part > 0.0000001 && frac_digits < 6 && idx < buf_size - 1) {
+            frac_part *= 10;
+            int digit = (int)frac_part;
+            buf[idx++] = '0' + digit;
+            frac_part -= digit;
+            frac_digits++;
+        }
+
+        // Remove trailing zeros
+        while (idx > 0 && buf[idx-1] == '0') {
+            idx--;
+        }
+        // Remove decimal point if no fractional digits
+        if (idx > 0 && buf[idx-1] == '.') {
+            idx--;
+        }
+    }
+
+    buf[idx] = '\0';
+}
+
 // ============ Drawing ============
 
 static void draw_display(void) {
@@ -90,33 +151,13 @@ static void draw_display(void) {
     buf_draw_rect(BTN_PAD, BTN_PAD, win_w - BTN_PAD * 2, DISPLAY_H, COLOR_BLACK);
 
     // Format number
-    char buf[16];
-    int n = display_value;
-    int neg = 0;
-    if (n < 0) {
-        neg = 1;
-        n = -n;
-    }
-
-    int i = 15;
-    buf[i--] = '\0';
-    if (n == 0) {
-        buf[i--] = '0';
-    } else {
-        while (n > 0 && i >= 0) {
-            buf[i--] = '0' + (n % 10);
-            n /= 10;
-        }
-    }
-    if (neg && i >= 0) {
-        buf[i--] = '-';
-    }
-    i++;
+    char buf[24];
+    float_to_str(display_value, buf, sizeof(buf));
 
     // Right-align in display
-    int text_len = strlen(&buf[i]);
+    int text_len = strlen(buf);
     int text_x = win_w - BTN_PAD * 2 - text_len * 8 - 4;
-    buf_draw_string(text_x, BTN_PAD + 8, &buf[i], COLOR_BLACK, 0x00EEEEEE);
+    buf_draw_string(text_x, BTN_PAD + 8, buf, COLOR_BLACK, 0x00EEEEEE);
 }
 
 static void draw_button(int row, int col, int pressed) {
@@ -176,7 +217,7 @@ static void do_op(void) {
         case '-': display_value = pending_value - display_value; break;
         case '*': display_value = pending_value * display_value; break;
         case '/':
-            if (display_value != 0)
+            if (display_value != 0.0)
                 display_value = pending_value / display_value;
             break;
     }
@@ -192,19 +233,29 @@ static void button_click(int row, int col) {
         if (clear_on_digit) {
             display_value = digit;
             clear_on_digit = 0;
+            has_decimal = 0;
+            decimal_place = 0.1;
+        } else if (has_decimal) {
+            display_value = display_value + digit * decimal_place;
+            decimal_place *= 0.1;
         } else {
-            display_value = display_value * 10 + digit;
+            display_value = display_value * 10.0 + digit;
         }
-    } else if (c == 'C') {
-        display_value = 0;
-        pending_value = 0;
-        pending_op = 0;
-        clear_on_digit = 0;
+    } else if (c == '.') {
+        if (!has_decimal) {
+            has_decimal = 1;
+            decimal_place = 0.1;
+            if (clear_on_digit) {
+                display_value = 0.0;
+                clear_on_digit = 0;
+            }
+        }
     } else if (c == '=') {
         if (pending_op) {
             do_op();
         }
         clear_on_digit = 1;
+        has_decimal = 0;
     } else if (c == '+' || c == '-' || c == '*' || c == '/') {
         if (pending_op) {
             do_op();
@@ -212,7 +263,18 @@ static void button_click(int row, int col) {
         pending_value = display_value;
         pending_op = c;
         clear_on_digit = 1;
+        has_decimal = 0;
     }
+}
+
+// Clear function (C button replaced with .)
+static void clear_calc(void) {
+    display_value = 0.0;
+    pending_value = 0.0;
+    pending_op = 0;
+    clear_on_digit = 0;
+    has_decimal = 0;
+    decimal_place = 0.1;
 }
 
 // ============ Input Handling ============
@@ -316,12 +378,13 @@ int main(kapi_t *kapi, int argc, char **argv) {
                         if (digit == 0) { row = 3; col = 1; }
                         button_click(row, col);
                         draw_all();
-                    } else if (c == '+') { button_click(3, 3); draw_all(); }
+                    } else if (c == '.') { button_click(3, 0); draw_all(); }
+                    else if (c == '+') { button_click(3, 3); draw_all(); }
                     else if (c == '-') { button_click(2, 3); draw_all(); }
                     else if (c == '*') { button_click(1, 3); draw_all(); }
                     else if (c == '/') { button_click(0, 3); draw_all(); }
                     else if (c == '=' || c == '\r' || c == '\n') { button_click(3, 2); draw_all(); }
-                    else if (c == 'c' || c == 'C') { button_click(3, 0); draw_all(); }
+                    else if (c == 'c' || c == 'C') { clear_calc(); draw_all(); }
                     else if (c == 'q' || c == 'Q') { running = 0; }
                     break;
                 }
