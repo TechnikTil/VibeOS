@@ -19,6 +19,7 @@
 #include "virtio_blk.h"
 #include "mouse.h"
 #include "irq.h"
+#include "rtc.h"
 
 // QEMU virt machine PL011 UART base address
 #define UART0_BASE 0x09000000
@@ -141,6 +142,9 @@ void kernel_main(void) {
 
     // Initialize timer (10ms tick = 100 ticks/second)
     timer_init(10);
+
+    // Initialize RTC (real time clock)
+    rtc_init();
 
     // Initialize keyboard
     keyboard_init();

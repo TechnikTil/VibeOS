@@ -11,6 +11,7 @@
 #include "fb.h"
 #include "mouse.h"
 #include "irq.h"
+#include "rtc.h"
 
 // Global kernel API instance
 kapi_t kapi;
@@ -139,6 +140,20 @@ static int kapi_get_cwd(char *buf, size_t size) {
     return vfs_get_cwd_path(buf, size);
 }
 
+// Wrapper for get_datetime (flattens the datetime_t struct)
+static void kapi_get_datetime(int *year, int *month, int *day,
+                              int *hour, int *minute, int *second, int *weekday) {
+    datetime_t dt;
+    rtc_get_datetime(&dt);
+    if (year) *year = dt.year;
+    if (month) *month = dt.month;
+    if (day) *day = dt.day;
+    if (hour) *hour = dt.hour;
+    if (minute) *minute = dt.minute;
+    if (second) *second = dt.second;
+    if (weekday) *weekday = dt.weekday;
+}
+
 void kapi_init(void) {
     kapi.version = KAPI_VERSION;
 
@@ -223,4 +238,8 @@ void kapi_init(void) {
     kapi.get_uptime_ticks = timer_get_ticks;
     kapi.get_mem_used = memory_used;
     kapi.get_mem_free = memory_free;
+
+    // RTC
+    kapi.get_timestamp = rtc_get_timestamp;
+    kapi.get_datetime = kapi_get_datetime;
 }

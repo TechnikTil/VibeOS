@@ -101,6 +101,11 @@ typedef struct {
     size_t (*get_mem_used)(void);        // Get used memory in bytes
     size_t (*get_mem_free)(void);        // Get free memory in bytes
 
+    // RTC (Real Time Clock)
+    uint32_t (*get_timestamp)(void);     // Unix timestamp (seconds since 1970)
+    void (*get_datetime)(int *year, int *month, int *day,
+                         int *hour, int *minute, int *second, int *weekday);
+
 } kapi_t;
 
 // Window event types

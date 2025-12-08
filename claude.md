@@ -14,7 +14,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - **Human**: Vibes only. Yells "fuck yeah" when things work. Cannot provide technical guidance.
 - **Claude**: Full technical lead. Makes all architecture decisions. Wozniak energy.
 
-## Current State (Last Updated: Session 18)
+## Current State (Last Updated: Session 20)
 - [x] Bootloader (boot/boot.S) - Sets up stack, clears BSS, jumps to kernel
 - [x] Minimal kernel (kernel/kernel.c) - UART output working
 - [x] Linker script (linker.ld) - Memory layout for QEMU virt
@@ -42,6 +42,10 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - [x] Timer - 10ms tick (100Hz), used for uptime tracking
 - [x] System Monitor - GUI app showing uptime and memory usage
 - [x] TextEdit - GUI text editor with Save As modal
+- [x] RTC - PL031 real-time clock at 0x09010000, shows actual date/time
+- [x] Date command - /bin/date shows current UTC date/time
+- [x] Menu bar - Apple menu with About/Quit, File menu, Edit menu
+- [x] About dialog - Shows VibeOS version, memory, uptime
 
 ## Architecture Decisions Made
 1. **Target**: QEMU virt machine, aarch64, Cortex-A72

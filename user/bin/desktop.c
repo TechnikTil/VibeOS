@@ -90,12 +90,63 @@ static int drag_offset_x, drag_offset_y;
 // Desktop running flag
 static int running = 1;
 
+// Menu system
+#define MENU_NONE   -1
+#define MENU_APPLE   0
+#define MENU_FILE    1
+#define MENU_EDIT    2
+
+static int open_menu = MENU_NONE;  // Currently open menu (-1 = none)
+
+// Menu item structure
+typedef struct {
+    const char *label;   // NULL = separator
+    int action;          // Action ID
+} menu_item_t;
+
+// Action IDs
+#define ACTION_NONE           0
+#define ACTION_ABOUT          1
+#define ACTION_QUIT           2
+#define ACTION_NEW_WINDOW     3
+#define ACTION_CLOSE_WINDOW   4
+#define ACTION_CUT            5
+#define ACTION_COPY           6
+#define ACTION_PASTE          7
+
+// Apple menu items
+static const menu_item_t apple_menu[] = {
+    { "About This Computer", ACTION_ABOUT },
+    { NULL, 0 },  // separator
+    { "Quit Desktop", ACTION_QUIT },
+    { NULL, -1 }  // end marker
+};
+
+// File menu items
+static const menu_item_t file_menu[] = {
+    { "New Terminal", ACTION_NEW_WINDOW },
+    { "Close Window", ACTION_CLOSE_WINDOW },
+    { NULL, -1 }
+};
+
+// Edit menu items
+static const menu_item_t edit_menu[] = {
+    { "Cut", ACTION_CUT },
+    { "Copy", ACTION_COPY },
+    { "Paste", ACTION_PASTE },
+    { NULL, -1 }
+};
+
 // Forward declarations
 static void draw_desktop(void);
 static void draw_window(int wid);
 static void draw_dock(void);
 static void draw_menu_bar(void);
 static void flip_buffer(void);
+static void draw_about_dialog(void);
+
+// About dialog state (declared here so draw_desktop can see it)
+static int show_about_dialog = 0;
 
 // ============ Backbuffer Drawing ============
 
@@ -667,6 +718,105 @@ static int dock_icon_at_point(int x, int y) {
 
 // ============ Menu Bar ============
 
+// Format time string: "HH:MM" (5 chars + null)
+static void format_time(char *buf) {
+    int year, month, day, hour, minute, second, weekday;
+    api->get_datetime(&year, &month, &day, &hour, &minute, &second, &weekday);
+
+    buf[0] = '0' + (hour / 10);
+    buf[1] = '0' + (hour % 10);
+    buf[2] = ':';
+    buf[3] = '0' + (minute / 10);
+    buf[4] = '0' + (minute % 10);
+    buf[5] = '\0';
+}
+
+// Format date string: "Mon Dec 8" (max ~10 chars)
+static void format_date(char *buf) {
+    static const char day_names[7][4] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    static const char month_names[12][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+    int year, month, day, hour, minute, second, weekday;
+    (void)year; (void)hour; (void)minute; (void)second;
+    api->get_datetime(&year, &month, &day, &hour, &minute, &second, &weekday);
+
+    // Copy day name
+    buf[0] = day_names[weekday][0];
+    buf[1] = day_names[weekday][1];
+    buf[2] = day_names[weekday][2];
+    buf[3] = ' ';
+
+    // Copy month name
+    buf[4] = month_names[month - 1][0];
+    buf[5] = month_names[month - 1][1];
+    buf[6] = month_names[month - 1][2];
+    buf[7] = ' ';
+
+    // Day number
+    if (day >= 10) {
+        buf[8] = '0' + (day / 10);
+        buf[9] = '0' + (day % 10);
+        buf[10] = '\0';
+    } else {
+        buf[8] = '0' + day;
+        buf[9] = '\0';
+    }
+}
+
+// Menu bar item positions (x, width)
+#define APPLE_MENU_X     4
+#define APPLE_MENU_W     20
+#define FILE_MENU_X      28
+#define FILE_MENU_W      32
+#define EDIT_MENU_X      68
+#define EDIT_MENU_W      32
+
+static void draw_dropdown_menu(int menu_x, const menu_item_t *items) {
+    // Calculate menu dimensions
+    int max_width = 0;
+    int item_count = 0;
+    for (int i = 0; items[i].action != -1; i++) {
+        if (items[i].label) {
+            int len = strlen(items[i].label);
+            if (len > max_width) max_width = len;
+        }
+        item_count++;
+    }
+
+    int menu_w = max_width * 8 + 24;  // Padding on sides
+    int menu_h = item_count * 16 + 4; // 16px per item + border
+
+    int menu_y = MENU_BAR_HEIGHT;
+
+    // Draw menu background with shadow
+    bb_fill_rect(menu_x + 2, menu_y + 2, menu_w, menu_h, COLOR_BLACK);  // Shadow
+    bb_fill_rect(menu_x, menu_y, menu_w, menu_h, COLOR_WHITE);
+    bb_draw_rect(menu_x, menu_y, menu_w, menu_h, COLOR_BLACK);
+
+    // Draw items
+    int y = menu_y + 2;
+    for (int i = 0; items[i].action != -1; i++) {
+        if (items[i].label == NULL) {
+            // Separator
+            bb_draw_hline(menu_x + 4, y + 7, menu_w - 8, COLOR_BLACK);
+        } else {
+            // Check if mouse is over this item
+            int item_y = y;
+            int hovering = (mouse_y >= item_y && mouse_y < item_y + 16 &&
+                           mouse_x >= menu_x && mouse_x < menu_x + menu_w);
+
+            if (hovering) {
+                bb_fill_rect(menu_x + 2, item_y, menu_w - 4, 16, COLOR_BLACK);
+                bb_draw_string(menu_x + 12, item_y + 1, items[i].label, COLOR_WHITE, COLOR_BLACK);
+            } else {
+                bb_draw_string(menu_x + 12, item_y + 1, items[i].label, COLOR_BLACK, COLOR_WHITE);
+            }
+        }
+        y += 16;
+    }
+}
+
 static void draw_menu_bar(void) {
     // Background
     bb_fill_rect(0, 0, SCREEN_WIDTH, MENU_BAR_HEIGHT, COLOR_MENU_BG);
@@ -674,17 +824,60 @@ static void draw_menu_bar(void) {
     bb_draw_hline(0, MENU_BAR_HEIGHT - 2, SCREEN_WIDTH, COLOR_BLACK);
     bb_draw_hline(0, MENU_BAR_HEIGHT - 1, SCREEN_WIDTH, COLOR_BLACK);
 
-    // Apple logo in menu bar
-    draw_apple_logo(4, 2);
+    // Apple logo in menu bar (highlighted if menu open)
+    if (open_menu == MENU_APPLE) {
+        bb_fill_rect(APPLE_MENU_X - 2, 0, APPLE_MENU_W + 4, MENU_BAR_HEIGHT - 2, COLOR_BLACK);
+        // Draw inverted apple logo
+        for (int py = 0; py < 16; py++) {
+            for (int px = 0; px < 16; px++) {
+                if (apple_logo[py * 16 + px]) {
+                    bb_put_pixel(APPLE_MENU_X + px, 2 + py, COLOR_WHITE);
+                }
+            }
+        }
+    } else {
+        draw_apple_logo(APPLE_MENU_X, 2);
+    }
 
-    // Menu items with proper spacing
-    bb_draw_string(26, 2, "File", COLOR_MENU_TEXT, COLOR_MENU_BG);
-    bb_draw_string(66, 2, "Edit", COLOR_MENU_TEXT, COLOR_MENU_BG);
-    bb_draw_string(106, 2, "View", COLOR_MENU_TEXT, COLOR_MENU_BG);
-    bb_draw_string(154, 2, "Special", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    // File menu
+    if (open_menu == MENU_FILE) {
+        bb_fill_rect(FILE_MENU_X - 4, 0, FILE_MENU_W + 8, MENU_BAR_HEIGHT - 2, COLOR_BLACK);
+        bb_draw_string(FILE_MENU_X, 2, "File", COLOR_WHITE, COLOR_BLACK);
+    } else {
+        bb_draw_string(FILE_MENU_X, 2, "File", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    }
 
-    // Clock on right side (just for aesthetics)
-    bb_draw_string(SCREEN_WIDTH - 52, 2, "12:00", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    // Edit menu
+    if (open_menu == MENU_EDIT) {
+        bb_fill_rect(EDIT_MENU_X - 4, 0, EDIT_MENU_W + 8, MENU_BAR_HEIGHT - 2, COLOR_BLACK);
+        bb_draw_string(EDIT_MENU_X, 2, "Edit", COLOR_WHITE, COLOR_BLACK);
+    } else {
+        bb_draw_string(EDIT_MENU_X, 2, "Edit", COLOR_MENU_TEXT, COLOR_MENU_BG);
+    }
+
+    // Date and time on right side
+    char date_buf[16];
+    char time_buf[8];
+    format_date(date_buf);
+    format_time(time_buf);
+
+    // Draw date then time: "Mon Dec 8  12:00"
+    int date_len = strlen(date_buf);
+    int time_x = SCREEN_WIDTH - 48;  // Time on far right
+    int date_x = time_x - (date_len * 8) - 16;  // Date with gap
+
+    bb_draw_string(date_x, 2, date_buf, COLOR_MENU_TEXT, COLOR_MENU_BG);
+    bb_draw_string(time_x, 2, time_buf, COLOR_MENU_TEXT, COLOR_MENU_BG);
+}
+
+static void draw_open_menu(void) {
+    if (open_menu == MENU_APPLE) {
+        draw_dropdown_menu(APPLE_MENU_X - 2, apple_menu);
+    } else if (open_menu == MENU_FILE) {
+        draw_dropdown_menu(FILE_MENU_X - 4, file_menu);
+    } else if (open_menu == MENU_EDIT) {
+        draw_dropdown_menu(EDIT_MENU_X - 4, edit_menu);
+    }
 }
 
 // ============ Window Drawing ============
@@ -832,6 +1025,16 @@ static void draw_desktop(void) {
 
     // Dock
     draw_dock();
+
+    // Open menu dropdown (draw last, on top of everything)
+    if (open_menu != MENU_NONE) {
+        draw_open_menu();
+    }
+
+    // About dialog (on top of everything)
+    if (show_about_dialog) {
+        draw_about_dialog();
+    }
 }
 
 static void flip_buffer(void) {
@@ -840,7 +1043,265 @@ static void flip_buffer(void) {
 
 // ============ Input Handling ============
 
+#define ABOUT_W 280
+#define ABOUT_H 180
+#define ABOUT_X ((SCREEN_WIDTH - ABOUT_W) / 2)
+#define ABOUT_Y ((SCREEN_HEIGHT - ABOUT_H) / 2 - 20)
+
+static void draw_about_dialog(void) {
+    int x = ABOUT_X;
+    int y = ABOUT_Y;
+
+    // Shadow
+    bb_fill_rect(x + 3, y + 3, ABOUT_W, ABOUT_H, COLOR_BLACK);
+
+    // Background
+    bb_fill_rect(x, y, ABOUT_W, ABOUT_H, COLOR_WHITE);
+
+    // Border (double line)
+    bb_draw_rect(x, y, ABOUT_W, ABOUT_H, COLOR_BLACK);
+    bb_draw_rect(x + 1, y + 1, ABOUT_W - 2, ABOUT_H - 2, COLOR_BLACK);
+
+    // Draw a big Apple logo in the dialog
+    int logo_x = x + (ABOUT_W - 16) / 2;
+    int logo_y = y + 12;
+    for (int py = 0; py < 16; py++) {
+        for (int px = 0; px < 16; px++) {
+            if (apple_logo[py * 16 + px]) {
+                // Draw it 2x size
+                bb_put_pixel(logo_x + px*2, logo_y + py*2, COLOR_BLACK);
+                bb_put_pixel(logo_x + px*2 + 1, logo_y + py*2, COLOR_BLACK);
+                bb_put_pixel(logo_x + px*2, logo_y + py*2 + 1, COLOR_BLACK);
+                bb_put_pixel(logo_x + px*2 + 1, logo_y + py*2 + 1, COLOR_BLACK);
+            }
+        }
+    }
+
+    // Title
+    const char *title = "VibeOS";
+    int title_x = x + (ABOUT_W - strlen(title) * 8) / 2;
+    bb_draw_string(title_x, y + 50, title, COLOR_BLACK, COLOR_WHITE);
+
+    // Version
+    const char *version = "Version 1.0";
+    int ver_x = x + (ABOUT_W - strlen(version) * 8) / 2;
+    bb_draw_string(ver_x, y + 68, version, COLOR_BLACK, COLOR_WHITE);
+
+    // Separator line
+    bb_draw_hline(x + 20, y + 88, ABOUT_W - 40, COLOR_BLACK);
+
+    // System info
+    // Memory
+    unsigned long mem_used = api->get_mem_used() / 1024;  // KB
+    unsigned long mem_free = api->get_mem_free() / 1024;  // KB
+    unsigned long mem_total = mem_used + mem_free;
+
+    char mem_str[40];
+    // Manual sprintf: "Memory: XXX KB used / XXX KB total"
+    char *p = mem_str;
+    const char *m1 = "Memory: ";
+    while (*m1) *p++ = *m1++;
+
+    // Used KB
+    char num[12];
+    int ni = 0;
+    unsigned long n = mem_used;
+    if (n == 0) num[ni++] = '0';
+    else { while (n > 0) { num[ni++] = '0' + (n % 10); n /= 10; } }
+    while (ni > 0) *p++ = num[--ni];
+
+    const char *m2 = " / ";
+    while (*m2) *p++ = *m2++;
+
+    // Total KB
+    n = mem_total;
+    ni = 0;
+    if (n == 0) num[ni++] = '0';
+    else { while (n > 0) { num[ni++] = '0' + (n % 10); n /= 10; } }
+    while (ni > 0) *p++ = num[--ni];
+
+    const char *m3 = " KB";
+    while (*m3) *p++ = *m3++;
+    *p = '\0';
+
+    int mem_x = x + (ABOUT_W - strlen(mem_str) * 8) / 2;
+    bb_draw_string(mem_x, y + 100, mem_str, COLOR_BLACK, COLOR_WHITE);
+
+    // Uptime
+    unsigned long ticks = api->get_uptime_ticks();
+    unsigned long secs = ticks / 100;
+    unsigned long mins = secs / 60;
+    unsigned long hours = mins / 60;
+    mins = mins % 60;
+    secs = secs % 60;
+
+    char up_str[32];
+    p = up_str;
+    const char *u1 = "Uptime: ";
+    while (*u1) *p++ = *u1++;
+
+    // Hours
+    n = hours;
+    ni = 0;
+    if (n == 0) num[ni++] = '0';
+    else { while (n > 0) { num[ni++] = '0' + (n % 10); n /= 10; } }
+    while (ni > 0) *p++ = num[--ni];
+    *p++ = ':';
+
+    // Minutes (2 digits)
+    *p++ = '0' + (mins / 10);
+    *p++ = '0' + (mins % 10);
+    *p++ = ':';
+
+    // Seconds (2 digits)
+    *p++ = '0' + (secs / 10);
+    *p++ = '0' + (secs % 10);
+    *p = '\0';
+
+    int up_x = x + (ABOUT_W - strlen(up_str) * 8) / 2;
+    bb_draw_string(up_x, y + 118, up_str, COLOR_BLACK, COLOR_WHITE);
+
+    // OK button
+    int btn_w = 60;
+    int btn_h = 20;
+    int btn_x = x + (ABOUT_W - btn_w) / 2;
+    int btn_y = y + ABOUT_H - 35;
+
+    // Check if hovering over button
+    int hovering = (mouse_x >= btn_x && mouse_x < btn_x + btn_w &&
+                   mouse_y >= btn_y && mouse_y < btn_y + btn_h);
+
+    if (hovering) {
+        bb_fill_rect(btn_x, btn_y, btn_w, btn_h, COLOR_BLACK);
+        bb_draw_string(btn_x + 20, btn_y + 3, "OK", COLOR_WHITE, COLOR_BLACK);
+    } else {
+        bb_fill_rect(btn_x, btn_y, btn_w, btn_h, COLOR_WHITE);
+        bb_draw_rect(btn_x, btn_y, btn_w, btn_h, COLOR_BLACK);
+        bb_draw_rect(btn_x + 2, btn_y + 2, btn_w - 4, btn_h - 4, COLOR_BLACK);
+        bb_draw_string(btn_x + 20, btn_y + 3, "OK", COLOR_BLACK, COLOR_WHITE);
+    }
+}
+
+// Execute a menu action
+static void do_menu_action(int action) {
+    switch (action) {
+        case ACTION_ABOUT:
+            show_about_dialog = 1;
+            break;
+        case ACTION_QUIT:
+            running = 0;
+            break;
+        case ACTION_NEW_WINDOW:
+            api->spawn("/bin/term");
+            break;
+        case ACTION_CLOSE_WINDOW:
+            if (focused_window >= 0) {
+                push_event(focused_window, WIN_EVENT_CLOSE, 0, 0, 0);
+            }
+            break;
+        case ACTION_CUT:
+        case ACTION_COPY:
+        case ACTION_PASTE:
+            // TODO: Clipboard operations
+            break;
+    }
+}
+
+// Check if click is on a menu item and return its action
+static int get_menu_item_action(int menu_x, const menu_item_t *items, int click_x, int click_y) {
+    // Calculate menu dimensions
+    int max_width = 0;
+    int item_count = 0;
+    for (int i = 0; items[i].action != -1; i++) {
+        if (items[i].label) {
+            int len = strlen(items[i].label);
+            if (len > max_width) max_width = len;
+        }
+        item_count++;
+    }
+
+    int menu_w = max_width * 8 + 24;
+    int menu_y = MENU_BAR_HEIGHT;
+
+    // Check if click is within menu bounds
+    if (click_x < menu_x || click_x >= menu_x + menu_w) return ACTION_NONE;
+    if (click_y < menu_y) return ACTION_NONE;
+
+    // Find which item was clicked
+    int y = menu_y + 2;
+    for (int i = 0; items[i].action != -1; i++) {
+        if (click_y >= y && click_y < y + 16) {
+            if (items[i].label != NULL) {
+                return items[i].action;
+            }
+            return ACTION_NONE;  // Clicked on separator
+        }
+        y += 16;
+    }
+
+    return ACTION_NONE;
+}
+
 static void handle_mouse_click(int x, int y, uint8_t buttons) {
+    // Handle About dialog (modal - blocks everything else)
+    if (show_about_dialog && (buttons & MOUSE_BTN_LEFT)) {
+        // Check OK button
+        int btn_w = 60;
+        int btn_h = 20;
+        int btn_x = ABOUT_X + (ABOUT_W - btn_w) / 2;
+        int btn_y = ABOUT_Y + ABOUT_H - 35;
+
+        if (x >= btn_x && x < btn_x + btn_w &&
+            y >= btn_y && y < btn_y + btn_h) {
+            show_about_dialog = 0;
+        }
+        // Click anywhere in dialog dismisses it too
+        if (x >= ABOUT_X && x < ABOUT_X + ABOUT_W &&
+            y >= ABOUT_Y && y < ABOUT_Y + ABOUT_H) {
+            // Clicked inside dialog, but not button - do nothing (or dismiss)
+        } else {
+            // Clicked outside dialog - dismiss it
+            show_about_dialog = 0;
+        }
+        return;  // Modal - don't process other clicks
+    }
+
+    // Handle menu bar clicks (left click only)
+    if ((buttons & MOUSE_BTN_LEFT) && y < MENU_BAR_HEIGHT) {
+        // Check which menu was clicked
+        if (x >= APPLE_MENU_X && x < APPLE_MENU_X + APPLE_MENU_W) {
+            open_menu = (open_menu == MENU_APPLE) ? MENU_NONE : MENU_APPLE;
+        } else if (x >= FILE_MENU_X && x < FILE_MENU_X + FILE_MENU_W) {
+            open_menu = (open_menu == MENU_FILE) ? MENU_NONE : MENU_FILE;
+        } else if (x >= EDIT_MENU_X && x < EDIT_MENU_X + EDIT_MENU_W) {
+            open_menu = (open_menu == MENU_EDIT) ? MENU_NONE : MENU_EDIT;
+        } else {
+            open_menu = MENU_NONE;
+        }
+        return;
+    }
+
+    // Handle clicks on open menu dropdown
+    if ((buttons & MOUSE_BTN_LEFT) && open_menu != MENU_NONE) {
+        int action = ACTION_NONE;
+
+        if (open_menu == MENU_APPLE) {
+            action = get_menu_item_action(APPLE_MENU_X - 2, apple_menu, x, y);
+        } else if (open_menu == MENU_FILE) {
+            action = get_menu_item_action(FILE_MENU_X - 4, file_menu, x, y);
+        } else if (open_menu == MENU_EDIT) {
+            action = get_menu_item_action(EDIT_MENU_X - 4, edit_menu, x, y);
+        }
+
+        if (action != ACTION_NONE) {
+            do_menu_action(action);
+        }
+
+        // Close menu after any click outside menu bar
+        open_menu = MENU_NONE;
+        return;
+    }
+
     // Check dock first (left click only)
     if (buttons & MOUSE_BTN_LEFT) {
         int dock_idx = dock_icon_at_point(x, y);
@@ -1012,7 +1473,15 @@ int main(kapi_t *kapi, int argc, char **argv) {
         api->yield();
     }
 
-    // Cleanup
+    // Cleanup - clear screen to black and restore console
+    for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
+        api->fb_base[i] = COLOR_BLACK;
+    }
+
+    // Clear console and show exit message
+    api->clear();
+    api->puts("Desktop exited.\n");
+
     api->free(backbuffer);
 
     return 0;
