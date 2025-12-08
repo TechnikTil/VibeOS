@@ -139,9 +139,8 @@ void kernel_main(void) {
     // Initialize interrupt controller (GIC)
     irq_init();
 
-    // Initialize timer (10ms tick for now)
-    // DISABLED FOR DEBUGGING - timer may be breaking things
-    // timer_init(10);
+    // Initialize timer (10ms tick = 100 ticks/second)
+    timer_init(10);
 
     // Initialize keyboard
     keyboard_init();

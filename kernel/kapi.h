@@ -96,6 +96,8 @@ typedef struct {
 
     // System info
     uint64_t (*get_uptime_ticks)(void);  // Get timer tick count (100 ticks/sec)
+    size_t (*get_mem_used)(void);        // Get used memory in bytes
+    size_t (*get_mem_free)(void);        // Get free memory in bytes
 
 } kapi_t;
 

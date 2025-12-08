@@ -206,4 +206,9 @@ void kapi_init(void) {
     kapi.stdio_puts = 0;
     kapi.stdio_getc = 0;
     kapi.stdio_has_key = 0;
+
+    // System info
+    kapi.get_uptime_ticks = timer_get_ticks;
+    kapi.get_mem_used = memory_used;
+    kapi.get_mem_free = memory_free;
 }
