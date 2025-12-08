@@ -16,10 +16,19 @@ static int win_w, win_h;
 #define WINDOW_W 500
 #define WINDOW_H 350
 #define TITLE_BAR_H 18
-#define CONTENT_X 4
+#define GUTTER_W 40      // Line number gutter width
+#define CONTENT_X (GUTTER_W + 4)
 #define CONTENT_Y 4
 #define CHAR_W 8
 #define CHAR_H 16
+
+// Colors for syntax highlighting
+#define COLOR_GUTTER_BG   0x00EEEEEE
+#define COLOR_GUTTER_FG   0x00888888
+#define COLOR_KEYWORD     0x000000AA  // Dark blue
+#define COLOR_COMMENT     0x00008800  // Dark green
+#define COLOR_STRING      0x00AA0000  // Dark red
+#define COLOR_NUMBER      0x00AA00AA  // Purple
 
 // Text buffer
 #define MAX_LINES 256
@@ -40,9 +49,44 @@ static int save_as_mode = 0;
 static char save_as_buf[256];
 static int save_as_len = 0;
 
+// Syntax highlighting
+static int syntax_c = 0;  // Is this a .c or .h file?
+
+// C keywords
+static const char *c_keywords[] = {
+    "auto", "break", "case", "char", "const", "continue", "default", "do",
+    "double", "else", "enum", "extern", "float", "for", "goto", "if",
+    "int", "long", "register", "return", "short", "signed", "sizeof", "static",
+    "struct", "switch", "typedef", "union", "unsigned", "void", "volatile", "while",
+    "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t",
+    "size_t", "NULL", "true", "false",
+    0
+};
+
 // Visible area
 static int visible_cols;
 static int visible_rows;
+
+// Check if filename ends with extension
+static int ends_with(const char *str, const char *suffix) {
+    int str_len = strlen(str);
+    int suf_len = strlen(suffix);
+    if (suf_len > str_len) return 0;
+    for (int i = 0; i < suf_len; i++) {
+        if (str[str_len - suf_len + i] != suffix[i]) return 0;
+    }
+    return 1;
+}
+
+static void detect_syntax(const char *filename) {
+    syntax_c = 0;
+    if (!filename || !filename[0]) return;
+
+    if (ends_with(filename, ".c") || ends_with(filename, ".h") ||
+        ends_with(filename, ".C") || ends_with(filename, ".H")) {
+        syntax_c = 1;
+    }
+}
 
 // ============ Drawing Helpers ============
 
@@ -186,6 +230,8 @@ static void delete_char_at(void) {
 // ============ File Operations ============
 
 static void load_file(const char *path) {
+    detect_syntax(path);
+
     void *file = api->open(path);
     if (!file) {
         text_len = 0;
@@ -244,6 +290,9 @@ static void do_save(const char *path) {
         current_file[i] = path[i];
     }
     current_file[i] = '\0';
+
+    // Update syntax highlighting for new filename
+    detect_syntax(current_file);
 
     // Update window title
     api->window_set_title(window_id, current_file);
@@ -309,9 +358,42 @@ static void draw_save_as_modal(void) {
     buf_draw_string(modal_x + 8, modal_y + 56, "Enter=Save  Esc=Cancel", COLOR_BLACK, COLOR_WHITE);
 }
 
+// Draw a line number right-aligned in the gutter
+static void draw_line_number(int screen_row, int line_num) {
+    char num_str[8];
+    int n = line_num;
+    int len = 0;
+
+    // Convert number to string
+    if (n == 0) {
+        num_str[len++] = '0';
+    } else {
+        char tmp[8];
+        int ti = 0;
+        while (n > 0) {
+            tmp[ti++] = '0' + (n % 10);
+            n /= 10;
+        }
+        while (ti > 0) {
+            num_str[len++] = tmp[--ti];
+        }
+    }
+    num_str[len] = '\0';
+
+    // Right-align: draw at (GUTTER_W - 8 - len * CHAR_W)
+    int x = GUTTER_W - 8 - len * CHAR_W;
+    int y = CONTENT_Y + screen_row * CHAR_H;
+    buf_draw_string(x, y, num_str, COLOR_GUTTER_FG, COLOR_GUTTER_BG);
+}
+
 static void draw_all(void) {
     // Clear background (white)
     buf_fill_rect(0, 0, win_w, win_h, COLOR_WHITE);
+
+    // Draw gutter background
+    buf_fill_rect(0, 0, GUTTER_W, win_h, COLOR_GUTTER_BG);
+    // Gutter separator line
+    buf_fill_rect(GUTTER_W - 1, 0, 1, win_h, 0x00CCCCCC);
 
     // Draw border
     buf_fill_rect(0, 0, win_w, 1, COLOR_BLACK);
@@ -330,11 +412,24 @@ static void draw_all(void) {
         scroll_offset = cursor_line - visible_rows + 1;
     }
 
-    // Draw text
-    int x = CONTENT_X;
-    int y = CONTENT_Y;
+    // Draw line numbers for visible rows
+    int total_lines = count_lines();
+    for (int row = 0; row < visible_rows; row++) {
+        int line_num = scroll_offset + row + 1;  // 1-indexed
+        if (line_num <= total_lines) {
+            draw_line_number(row, line_num);
+        }
+    }
+
+    // Draw text with syntax highlighting
     int current_line = 0;
     int col = 0;
+
+    // Syntax highlighting state
+    int in_line_comment = 0;
+    int in_block_comment = 0;
+    int in_string = 0;
+    char string_char = 0;
 
     for (int i = 0; i <= text_len; i++) {
         // Draw cursor
@@ -353,16 +448,112 @@ static void draw_all(void) {
         char c = text_buffer[i];
 
         if (c == '\n') {
+            in_line_comment = 0;
             current_line++;
             col = 0;
         } else {
+            // Determine color for this character
+            uint32_t fg_color = COLOR_BLACK;
+
+            if (syntax_c) {
+                // Check for comment start/end
+                if (!in_string && !in_line_comment && !in_block_comment) {
+                    if (c == '/' && i + 1 < text_len && text_buffer[i + 1] == '/') {
+                        in_line_comment = 1;
+                    } else if (c == '/' && i + 1 < text_len && text_buffer[i + 1] == '*') {
+                        in_block_comment = 1;
+                    }
+                }
+
+                // Check for string start
+                if (!in_line_comment && !in_block_comment && !in_string) {
+                    if (c == '"' || c == '\'') {
+                        in_string = 1;
+                        string_char = c;
+                    }
+                } else if (in_string && c == string_char) {
+                    // Check for escape
+                    if (i == 0 || text_buffer[i - 1] != '\\') {
+                        // String ends after this char, color it as string
+                        fg_color = COLOR_STRING;
+                        // Draw this char, then reset
+                        if (current_line >= scroll_offset && current_line < scroll_offset + visible_rows) {
+                            if (i != cursor_pos) {
+                                int cy = CONTENT_Y + (current_line - scroll_offset) * CHAR_H;
+                                int cx = CONTENT_X + col * CHAR_W;
+                                if (cx + CHAR_W <= win_w - CONTENT_X) {
+                                    buf_draw_char(cx, cy, c, fg_color, COLOR_WHITE);
+                                }
+                            }
+                        }
+                        col++;
+                        in_string = 0;
+                        continue;
+                    }
+                }
+
+                // Check for block comment end
+                if (in_block_comment && c == '*' && i + 1 < text_len && text_buffer[i + 1] == '/') {
+                    // Will end after next char
+                }
+                if (in_block_comment && i > 0 && text_buffer[i - 1] == '*' && c == '/') {
+                    in_block_comment = 0;
+                }
+
+                // Set color based on state
+                if (in_line_comment || in_block_comment) {
+                    fg_color = COLOR_COMMENT;
+                } else if (in_string) {
+                    fg_color = COLOR_STRING;
+                } else {
+                    // Check for keywords
+                    int is_word_start = (i == 0 || !((text_buffer[i-1] >= 'a' && text_buffer[i-1] <= 'z') ||
+                                                     (text_buffer[i-1] >= 'A' && text_buffer[i-1] <= 'Z') ||
+                                                     (text_buffer[i-1] >= '0' && text_buffer[i-1] <= '9') ||
+                                                     text_buffer[i-1] == '_'));
+                    if (is_word_start && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_')) {
+                        // Extract word
+                        char word[32];
+                        int wi = 0;
+                        for (int j = i; j < text_len && wi < 31; j++) {
+                            char wc = text_buffer[j];
+                            if ((wc >= 'a' && wc <= 'z') || (wc >= 'A' && wc <= 'Z') ||
+                                (wc >= '0' && wc <= '9') || wc == '_') {
+                                word[wi++] = wc;
+                            } else {
+                                break;
+                            }
+                        }
+                        word[wi] = '\0';
+
+                        // Check if it's a keyword
+                        for (int k = 0; c_keywords[k]; k++) {
+                            if (strcmp(word, c_keywords[k]) == 0) {
+                                fg_color = COLOR_KEYWORD;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Check for numbers
+                    if (c >= '0' && c <= '9') {
+                        int is_num_start = (i == 0 || !((text_buffer[i-1] >= 'a' && text_buffer[i-1] <= 'z') ||
+                                                        (text_buffer[i-1] >= 'A' && text_buffer[i-1] <= 'Z') ||
+                                                        text_buffer[i-1] == '_'));
+                        if (is_num_start) {
+                            fg_color = COLOR_NUMBER;
+                        }
+                    }
+                }
+            }
+
             // Only draw if in visible area and not at cursor (cursor already drawn)
             if (current_line >= scroll_offset && current_line < scroll_offset + visible_rows) {
                 if (i != cursor_pos) {
                     int cy = CONTENT_Y + (current_line - scroll_offset) * CHAR_H;
                     int cx = CONTENT_X + col * CHAR_W;
                     if (cx + CHAR_W <= win_w - CONTENT_X) {
-                        buf_draw_char(cx, cy, c, COLOR_BLACK, COLOR_WHITE);
+                        buf_draw_char(cx, cy, c, fg_color, COLOR_WHITE);
                     }
                 }
             }
@@ -516,6 +707,13 @@ static void handle_key(int key) {
         case 0x1B: // Escape - could use for menu later
             break;
 
+        case '\t': // Tab - insert 4 spaces
+            insert_char(' ');
+            insert_char(' ');
+            insert_char(' ');
+            insert_char(' ');
+            break;
+
         // Arrow keys (special codes from keyboard driver)
         case 0x100: // Up
             cursor_to_line_col(cursor_pos, &line, &col);
@@ -552,7 +750,25 @@ static void handle_key(int key) {
 
         default:
             if (key >= 32 && key < 127) {
-                insert_char((char)key);
+                char c = (char)key;
+
+                // Auto-close brackets and quotes
+                char close_char = 0;
+                switch (c) {
+                    case '(': close_char = ')'; break;
+                    case '[': close_char = ']'; break;
+                    case '{': close_char = '}'; break;
+                    case '"': close_char = '"'; break;
+                    case '\'': close_char = '\''; break;
+                }
+
+                if (close_char) {
+                    insert_char(c);
+                    insert_char(close_char);
+                    cursor_pos--;  // Move cursor between the pair
+                } else {
+                    insert_char(c);
+                }
             }
             break;
     }

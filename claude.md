@@ -14,7 +14,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - **Human**: Vibes only. Yells "fuck yeah" when things work. Cannot provide technical guidance.
 - **Claude**: Full technical lead. Makes all architecture decisions. Wozniak energy.
 
-## Current State (Last Updated: Session 17)
+## Current State (Last Updated: Session 18)
 - [x] Bootloader (boot/boot.S) - Sets up stack, clears BSS, jumps to kernel
 - [x] Minimal kernel (kernel/kernel.c) - UART output working
 - [x] Linker script (linker.ld) - Memory layout for QEMU virt
@@ -39,6 +39,9 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - [x] FAT32 filesystem (kernel/fat32.c) - Read/write, supports long filenames
 - [x] Persistent storage - 64MB FAT32 disk image, mountable on macOS
 - [x] Interrupts - GIC-400 working! Keyboard via IRQ, boots at EL3 (Secure)
+- [x] Timer - 10ms tick (100Hz), used for uptime tracking
+- [x] System Monitor - GUI app showing uptime and memory usage
+- [x] TextEdit - GUI text editor with Save As modal
 
 ## Architecture Decisions Made
 1. **Target**: QEMU virt machine, aarch64, Cortex-A72
@@ -456,8 +459,54 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
   - Currently disabled to keep cooperative model stable
 - **Achievement**: Full interrupt support! GIC mystery finally solved after Sessions 2-3 failures!
 
+### Session 18
+- **Enabled timer for uptime tracking:**
+  - Timer fires at 100Hz (10ms intervals)
+  - `timer_get_ticks()` returns tick count since boot
+  - Keeping cooperative multitasking (no preemption)
+- **Added uptime command (`/bin/uptime`):**
+  - Shows hours/minutes/seconds since boot
+  - Also shows raw tick count
+  - Fixed crash: uptime wasn't in USER_PROGS list, old binary had wrong kapi struct
+- **Added memory stats to kapi:**
+  - `get_mem_used()` and `get_mem_free()`
+  - Heap is ~16MB (between BSS end and program load area at 0x41000000)
+- **Built System Monitor GUI app (`/bin/sysmon`):**
+  - Classic Mac-style windowed app
+  - Shows uptime (updates live)
+  - Shows memory usage with progress bar (diagonal stripes pattern)
+  - Shows used/free memory in MB
+  - Auto-refreshes every ~500ms
+- **Gotcha: USER_PROGS list**
+  - New userspace programs MUST be added to USER_PROGS in Makefile
+  - Old binaries on disk with outdated kapi struct will crash!
+- **Achievement**: Timer working! System monitoring! The vibes are immaculate.
+
+- **Built TextEdit (`/bin/textedit`):**
+  - Simple GUI text editor - no modes, just type
+  - Arrow keys, Home, End, Delete all work
+  - Ctrl+S to save
+  - Save As modal dialog when no filename set
+  - Status bar shows filename, line:col, modified indicator
+  - Scrolling for long files
+  - Usage: `textedit` or `textedit /path/to/file`
+- **Enhanced keyboard driver:**
+  - Arrow keys now return special codes (0x100-0x106)
+  - Ctrl modifier support (Ctrl+A = 1, Ctrl+S = 19, etc.)
+  - Key buffer changed from `char` to `int` to support extended codes
+  - Added Home, End, Delete key support
+- **TextEdit enhancements:**
+  - Line numbers in gray gutter on the left
+  - Tab key inserts 4 spaces
+  - Auto-close brackets and quotes: `()`, `[]`, `{}`, `""`, `''`
+  - C syntax highlighting (detects .c and .h files):
+    - Keywords in dark blue (if, else, for, while, return, etc.)
+    - Comments in dark green (// and /* */)
+    - String literals in dark red
+    - Numbers in purple
+  - Colors only appear in apps where it makes sense (desktop stays 1-bit B&W)
+- **Achievement**: Real text editor with IDE-lite features!
+
 **NEXT SESSION TODO:**
-- Enable timer for preemptive multitasking
-- Build notepad/GUI text editor
 - Build file explorer as windowed app
 - Maybe DOOM?
