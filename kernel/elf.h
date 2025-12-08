@@ -47,6 +47,28 @@ typedef struct {
 #define PT_DYNAMIC 2
 #define PT_INTERP  3
 
+// Dynamic section entry
+typedef struct {
+    int64_t  d_tag;
+    uint64_t d_val;
+} Elf64_Dyn;
+
+// Dynamic tags
+#define DT_NULL    0
+#define DT_RELA    7   // Address of Rela relocs
+#define DT_RELASZ  8   // Total size of Rela relocs
+#define DT_RELAENT 9   // Size of one Rela entry
+
+// Relocation entry with addend
+typedef struct {
+    uint64_t r_offset;
+    uint64_t r_info;
+    int64_t  r_addend;
+} Elf64_Rela;
+
+// Relocation types for AArch64
+#define R_AARCH64_RELATIVE 0x403
+
 // ELF identification indices
 #define EI_MAG0    0
 #define EI_MAG1    1

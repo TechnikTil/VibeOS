@@ -25,16 +25,24 @@ typedef struct block_header {
 
 static block_header_t *free_list = NULL;
 
+// Programs load at 0x41000000+, so heap must end before that
+#define PROGRAM_LOAD_AREA 0x41000000
+
 void memory_init(void) {
     // Heap starts after BSS, aligned to 16 bytes
     heap_start = ALIGN_UP((uint64_t)&_bss_end + 0x10000, 16);  // +64KB buffer after stack
-    heap_end = RAM_END;
+    // Heap ends BEFORE the program load area to avoid overlap
+    heap_end = PROGRAM_LOAD_AREA;
 
     // Initialize with one giant free block
     free_list = (block_header_t *)heap_start;
     free_list->size = heap_end - heap_start - HEADER_SIZE;
     free_list->is_free = 1;
     free_list->next = NULL;
+
+    // Debug: print heap range
+    extern void printf(const char *fmt, ...);
+    printf("[MEM] Heap: 0x%lx - 0x%lx\n", heap_start, heap_end);
 }
 
 void *malloc(size_t size) {

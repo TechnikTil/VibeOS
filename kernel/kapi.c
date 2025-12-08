@@ -191,4 +191,12 @@ void kapi_init(void) {
     kapi.mouse_get_pos = mouse_get_screen_pos;
     kapi.mouse_get_buttons = mouse_get_buttons;
     kapi.mouse_poll = mouse_poll;
+
+    // Window management (provided by desktop, not kernel)
+    kapi.window_create = 0;
+    kapi.window_destroy = 0;
+    kapi.window_get_buffer = 0;
+    kapi.window_poll_event = 0;
+    kapi.window_invalidate = 0;
+    kapi.window_set_title = 0;
 }

@@ -129,6 +129,49 @@ uint64_t elf_calc_size(const void *data, size_t size) {
     return max_addr - min_addr;
 }
 
+// Process dynamic relocations for PIE binaries
+static void elf_process_relocations(uint64_t load_base, const Elf64_Dyn *dynamic) {
+    uint64_t rela_addr = 0;
+    uint64_t rela_size = 0;
+    uint64_t rela_ent = sizeof(Elf64_Rela);
+
+    // Parse dynamic section to find RELA info
+    for (const Elf64_Dyn *dyn = dynamic; dyn->d_tag != DT_NULL; dyn++) {
+        switch (dyn->d_tag) {
+            case DT_RELA:    rela_addr = dyn->d_val; break;
+            case DT_RELASZ:  rela_size = dyn->d_val; break;
+            case DT_RELAENT: rela_ent = dyn->d_val;  break;
+        }
+    }
+
+    if (rela_addr == 0 || rela_size == 0) {
+        printf("[ELF] No relocations to process\n");
+        return;
+    }
+
+    // Relocations are at file offset, add load_base to get runtime address
+    const Elf64_Rela *rela = (const Elf64_Rela *)(load_base + rela_addr);
+    int num_relas = rela_size / rela_ent;
+
+    printf("[ELF] Processing %d relocations at 0x%lx\n", num_relas, load_base + rela_addr);
+
+    for (int i = 0; i < num_relas; i++) {
+        uint64_t offset = rela[i].r_offset;
+        uint64_t type = rela[i].r_info & 0xFFFFFFFF;
+        int64_t addend = rela[i].r_addend;
+
+        if (type == R_AARCH64_RELATIVE) {
+            // R_AARCH64_RELATIVE: *(load_base + offset) = load_base + addend
+            uint64_t *target = (uint64_t *)(load_base + offset);
+            *target = load_base + addend;
+        } else {
+            printf("[ELF] Unknown relocation type 0x%lx at offset 0x%lx\n", type, offset);
+        }
+    }
+
+    printf("[ELF] Relocations applied successfully\n");
+}
+
 // Load ELF at a specific base address
 int elf_load_at(const void *data, size_t size, uint64_t load_base, elf_load_info_t *info) {
     int valid = elf_validate(data, size);
@@ -145,10 +188,18 @@ int elf_load_at(const void *data, size_t size, uint64_t load_base, elf_load_info
            is_pie ? "PIE" : "EXEC", load_base, ehdr->e_phnum);
 
     uint64_t total_size = 0;
+    const Elf64_Dyn *dynamic = NULL;
 
     // Process program headers
     for (int i = 0; i < ehdr->e_phnum; i++) {
         const Elf64_Phdr *phdr = (const Elf64_Phdr *)(base + ehdr->e_phoff + i * ehdr->e_phentsize);
+
+        // Remember DYNAMIC segment for relocations
+        if (phdr->p_type == PT_DYNAMIC) {
+            // Dynamic section will be loaded, remember its runtime address
+            dynamic = (const Elf64_Dyn *)(load_base + phdr->p_vaddr);
+            continue;
+        }
 
         if (phdr->p_type != PT_LOAD) continue;
 
@@ -169,12 +220,20 @@ int elf_load_at(const void *data, size_t size, uint64_t load_base, elf_load_info
 
         // Zero BSS
         if (phdr->p_memsz > phdr->p_filesz) {
-            memset((uint8_t *)dest + phdr->p_filesz, 0,
-                   phdr->p_memsz - phdr->p_filesz);
+            uint64_t bss_start = dest_addr + phdr->p_filesz;
+            uint64_t bss_size = phdr->p_memsz - phdr->p_filesz;
+            printf("[ELF] Zeroing BSS: 0x%lx - 0x%lx (size 0x%lx)\n",
+                   bss_start, bss_start + bss_size, bss_size);
+            memset((uint8_t *)dest + phdr->p_filesz, 0, bss_size);
         }
 
         uint64_t seg_end = phdr->p_vaddr + phdr->p_memsz;
         if (seg_end > total_size) total_size = seg_end;
+    }
+
+    // Process relocations for PIE binaries
+    if (is_pie && dynamic) {
+        elf_process_relocations(load_base, dynamic);
     }
 
     // Calculate entry point

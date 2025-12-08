@@ -78,7 +78,26 @@ typedef struct {
     uint8_t (*mouse_get_buttons)(void);            // Get button state
     void (*mouse_poll)(void);                      // Poll for updates
 
+    // Window management (for desktop apps)
+    // These are set by the desktop window server, not the kernel
+    int  (*window_create)(int x, int y, int w, int h, const char *title);
+    void (*window_destroy)(int wid);
+    uint32_t *(*window_get_buffer)(int wid, int *w, int *h);
+    int  (*window_poll_event)(int wid, int *event_type, int *data1, int *data2, int *data3);
+    void (*window_invalidate)(int wid);
+    void (*window_set_title)(int wid, const char *title);
+
 } kapi_t;
+
+// Window event types
+#define WIN_EVENT_NONE       0
+#define WIN_EVENT_MOUSE_DOWN 1
+#define WIN_EVENT_MOUSE_UP   2
+#define WIN_EVENT_MOUSE_MOVE 3
+#define WIN_EVENT_KEY        4
+#define WIN_EVENT_CLOSE      5
+#define WIN_EVENT_FOCUS      6
+#define WIN_EVENT_UNFOCUS    7
 
 // Global kernel API instance
 extern kapi_t kapi;

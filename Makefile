@@ -24,7 +24,7 @@ KERNEL_C_SRCS = $(wildcard $(KERNEL_DIR)/*.c)
 KERNEL_S_SRCS = $(wildcard $(KERNEL_DIR)/*.S)
 
 # Userspace programs to build and install to disk
-USER_PROGS = snake tetris desktop vibesh echo ls cat pwd mkdir touch rm
+USER_PROGS = snake tetris desktop calc vibesh echo ls cat pwd mkdir touch rm
 
 # Object files
 BOOT_OBJ = $(BUILD_DIR)/boot.o
@@ -47,7 +47,8 @@ ASFLAGS = -mcpu=cortex-a72
 LDFLAGS = -nostdlib -T linker.ld
 
 # Userspace compiler flags (PIE for position-independent loading)
-USER_CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=cortex-a72 -mgeneral-regs-only -fPIE -Wall -Wextra -O2 -I$(USER_DIR)/lib
+# Use -O0 to ensure relocations are generated for static pointer initializers
+USER_CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=cortex-a72 -mgeneral-regs-only -fPIE -Wall -Wextra -O0 -I$(USER_DIR)/lib
 USER_LDFLAGS = -nostdlib -pie -T user/linker.ld
 
 # QEMU settings

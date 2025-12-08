@@ -12,7 +12,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - **Human**: Vibes only. Yells "fuck yeah" when things work. Cannot provide technical guidance.
 - **Claude**: Full technical lead. Makes all architecture decisions. Wozniak energy.
 
-## Current State (Last Updated: Session 13)
+## Current State (Last Updated: Session 15)
 - [x] Bootloader (boot/boot.S) - Sets up stack, clears BSS, jumps to kernel
 - [x] Minimal kernel (kernel/kernel.c) - UART output working
 - [x] Linker script (linker.ld) - Memory layout for QEMU virt
@@ -28,7 +28,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - [x] Shell (kernel/shell.c) - In-kernel shell with commands
 - [x] VFS (kernel/vfs.c) - Now backed by FAT32, falls back to in-memory
 - [x] Coreutils - ls, cd, pwd, mkdir, touch, rm, cat, echo (with > redirect)
-- [x] ELF loader (kernel/elf.c) - Loads PIE binaries at dynamic addresses
+- [x] ELF loader (kernel/elf.c) - Loads PIE binaries with full relocation support
 - [x] Process management (kernel/process.c) - Process table, context switching, scheduler
 - [x] Cooperative multitasking - yield(), spawn() in kapi, round-robin scheduler
 - [x] Kernel API (kernel/kapi.c) - Function pointers for programs to call kernel
@@ -194,9 +194,9 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
 - **Virtio-blk polling**: Save `used->idx` before submitting request, then poll until it changes. Don't use a global `last_used_idx` that persists across requests.
 - **Virtio-input device detection**: Both keyboard and tablet are virtio-input. Must check device name contains "Keyboard" specifically, not just starts with "Q".
 - **Userspace has no stdint.h**: Use `unsigned long` instead of `uint64_t` in user programs, or define types in vibe.h.
-- **PIE on AArch64**: Use `-fPIE` and `-pie` flags. AArch64 uses PC-relative addressing (ADRP+ADD) so no runtime relocations needed.
+- **PIE on AArch64**: Use `-fPIE` and `-pie` flags. ELF loader processes R_AARCH64_RELATIVE relocations at load time.
 - **Context switch**: Only need to save callee-saved registers (x19-x30, sp). Caller-saved regs are already on stack.
-- **PIE static variables**: Static/global variables in PIE userspace programs don't work reliably. Writes to BSS hang. Use heap allocation and pass pointers instead. Small programs (echo, ls) work fine; complex ones with large static state fail.
+- **PIE relocations (FIXED!)**: Use `-O0` for userspace to ensure GCC generates relocations for static pointer initializers. With `-O2`, GCC tries to be clever and compute addresses at runtime, but puts structs in BSS (zeroed) so pointers are NULL. The ELF loader now processes `.rela.dyn` section and fixes up `R_AARCH64_RELATIVE` entries. Normal C code with pointers now works!
 
 ## Session Log
 ### Session 1
@@ -378,6 +378,32 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
   - Abandoned - will make GUI editor instead
 - **Achievement**: Userspace shell and coreutils working!
 
+### Session 15
+- **MAJOR BREAKTHROUGH: Fixed PIE relocations!**
+  - Userspace C code now works like normal C - pointers, string literals, everything
+  - Problem: Static initializers with pointers (e.g., `const char *label = "hello"`) were broken
+  - Root cause: With `-O2`, GCC generates PC-relative code but puts struct in BSS (zeroed), so pointers are NULL
+  - Solution 1: Use `-O0` for userspace so GCC generates proper relocations
+  - Solution 2: ELF loader now processes `.rela.dyn` section with `R_AARCH64_RELATIVE` entries
+  - Added `Elf64_Dyn`, `Elf64_Rela` structs and `elf_process_relocations()` to kernel/elf.c
+  - Formula: `*(load_base + offset) = load_base + addend`
+- Rebuilt desktop from scratch (old one was a mess with everything embedded):
+  - Clean window manager architecture
+  - Desktop just manages windows, dock, menu bar, cursor
+  - Apps are separate binaries that use window API via kapi
+  - Fullscreen apps (snake, tetris) use exec() - desktop waits
+  - Windowed apps (calc) use spawn() + window API
+- Built Calculator app (`/bin/calc`):
+  - First proper windowed app using the new window API
+  - Creates window, gets buffer, draws buttons, receives events
+  - Working integer arithmetic
+- Window API in kapi:
+  - `window_create()`, `window_destroy()`, `window_get_buffer()`
+  - `window_poll_event()`, `window_invalidate()`, `window_set_title()`
+  - Desktop registers these functions at startup
+- **Achievement**: Can now write normal C code in userspace! This unlocks everything.
+
 **NEXT SESSION TODO:**
 - Build terminal emulator (shell in window - biggest unlock)
 - Build notepad/GUI text editor
+- Build file explorer as windowed app
