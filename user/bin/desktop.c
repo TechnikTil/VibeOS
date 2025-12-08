@@ -1469,7 +1469,7 @@ int main(kapi_t *kapi, int argc, char **argv) {
         mouse_prev_y = mouse_y;
         mouse_prev_buttons = mouse_buttons;
 
-        // Yield to other processes
+        // Yield to other processes (kernel WFIs if nothing else to run)
         api->yield();
     }
 

@@ -160,6 +160,14 @@ void kernel_main(void) {
     // Initialize mouse (for GUI)
     mouse_init();
 
+    // Register mouse IRQ handler
+    uint32_t mouse_irq = mouse_get_irq();
+    if (mouse_irq > 0) {
+        irq_register_handler(mouse_irq, mouse_irq_handler);
+        irq_enable_irq(mouse_irq);
+        printf("[KERNEL] Mouse IRQ %d registered\n", mouse_irq);
+    }
+
     // Initialize block device (for persistent storage)
     virtio_blk_init();
 

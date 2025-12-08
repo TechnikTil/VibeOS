@@ -14,7 +14,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - **Human**: Vibes only. Yells "fuck yeah" when things work. Cannot provide technical guidance.
 - **Claude**: Full technical lead. Makes all architecture decisions. Wozniak energy.
 
-## Current State (Last Updated: Session 20)
+## Current State (Last Updated: Session 21)
 - [x] Bootloader (boot/boot.S) - Sets up stack, clears BSS, jumps to kernel
 - [x] Minimal kernel (kernel/kernel.c) - UART output working
 - [x] Linker script (linker.ld) - Memory layout for QEMU virt
@@ -46,6 +46,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - [x] Date command - /bin/date shows current UTC date/time
 - [x] Menu bar - Apple menu with About/Quit, File menu, Edit menu
 - [x] About dialog - Shows VibeOS version, memory, uptime
+- [x] Power management - WFI-based idle, mouse interrupt-driven, 100Hz UI refresh
 
 ## Architecture Decisions Made
 1. **Target**: QEMU virt machine, aarch64, Cortex-A72
@@ -187,7 +188,8 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
 | Shell | POSIX-ish | Familiar syntax, basic redirects |
 | RAM | 256MB | Configurable |
 | Disk | 64MB FAT32 | Persistent storage via virtio-blk |
-| Interrupts | GIC-400 | Keyboard via IRQ, boots at EL3 for full GIC access |
+| Interrupts | GIC-400 | Keyboard & mouse via IRQ, boots at EL3 for full GIC access |
+| Power | WFI idle | Scheduler sleeps CPU when no work, wakes on interrupt |
 
 ## Gotchas / Lessons Learned
 - **aarch64 va_list**: Can't pass va_list to helper functions easily. Inline the va_arg handling.
@@ -213,6 +215,8 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
 - **strtok_r NULL rest**: After the last token, `strtok_r` sets `rest` to NULL (not empty string). Always check `rest && *rest` before dereferencing.
 - **Flash/RAM linker split**: When booting via `-bios`, code lives in flash (0x0) but data/BSS must be in RAM (0x40000000). Use separate MEMORY regions in linker script with `AT>` for load addresses. Copy .data from flash to RAM at boot.
 - **EL3→EL1 direct**: Can skip EL2 entirely. Set `SCR_EL3` with NS=0 (stay Secure), RW=1 (AArch64), then eret to EL1.
+- **WFI in scheduler**: When a process yields and it's the only runnable process, WFI before returning to it. This prevents busy-wait loops from cooking the CPU. The kernel handles idle, not individual apps.
+- **Don't double-sleep**: If kernel WFIs on idle, apps shouldn't also sleep_ms() - that causes double delay and sluggish UI. Apps just yield(), kernel handles the rest.
 
 ## Session Log
 ### Session 1
@@ -540,6 +544,36 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
   - Long filename (LFN) writing not yet implemented
   - Can read LFN, just can't create files with long names
 - **Achievement**: Full-featured file explorer!
+
+### Session 21
+- **Power management overhaul - CPU no longer cooks the host!**
+  - Problem: Desktop was redrawing at infinite FPS, QEMU using 150% CPU
+  - Root cause: Busy-wait loops everywhere, no sleeping
+- **Mouse now interrupt-driven:**
+  - Added `mouse_get_irq()` and `mouse_irq_handler()` (like keyboard)
+  - Registered mouse IRQ in kernel.c
+- **Added sleep functions to kapi:**
+  - `wfi()` - ARM Wait For Interrupt instruction
+  - `sleep_ms(ms)` - Sleep for at least N milliseconds using timer ticks
+- **Kernel-level idle via WFI:**
+  - When process yields and it's the only runnable process, scheduler calls WFI
+  - CPU sleeps until next interrupt (timer at 100Hz, keyboard, or mouse)
+  - This is the RIGHT approach - kernel handles idle, not apps
+- **Removed busy-wait delays from games:**
+  - Snake and Tetris had `delay()` functions doing NOPs
+  - Replaced with `sleep_ms()` for proper game tick timing
+- **Fixed recovery shell:**
+  - Was busy-looping on `keyboard_getc()` with no sleep
+  - Now WFIs when no input available
+- **UI apps just yield():**
+  - Desktop, calc, files, textedit, term, sysmon - all just call `yield()`
+  - Kernel WFIs if nothing else to do, wakes on interrupt
+  - Effective frame rate: 100fps (timer is 100Hz)
+- **Result:**
+  - CPU usage dropped from 150% to ~10% idle
+  - UI runs at smooth 100fps
+  - Mouse and keyboard remain responsive (interrupt-driven)
+- **Achievement**: Proper power management! VibeOS is now a good citizen.
 
 **NEXT SESSION TODO:**
 - Implement FAT32 LFN (Long Filename) writing

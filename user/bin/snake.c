@@ -47,12 +47,8 @@ static uint32_t rand(void) {
     return (rand_state >> 16) & 0x7FFF;
 }
 
-// Delay function
-static void delay(int cycles) {
-    for (volatile int i = 0; i < cycles; i++) {
-        __asm__ volatile("nop");
-    }
-}
+// Game speed delay in milliseconds
+#define SNAKE_DELAY_MS 100
 
 // Draw the border
 static void draw_border(void) {
@@ -293,7 +289,7 @@ static int wait_for_restart(void) {
                 return 0;
             }
         }
-        delay(10000);
+        api->sleep_ms(10);
     }
 }
 
@@ -323,10 +319,8 @@ int main(kapi_t *kapi, int argc, char **argv) {
             }
         }
 
-        delay(25000000);
-
-        // Yield to other processes
-        api->yield();
+        // Game tick - sleep controls game speed
+        api->sleep_ms(SNAKE_DELAY_MS);
     }
 
     api->clear();

@@ -299,12 +299,24 @@ void process_schedule(void) {
             current_pid = -1;
             context_switch(&old_proc->context, &kernel_context);
         }
-        // Already in kernel, just return
+        // Already in kernel with nothing to run - sleep until next interrupt
+        // This prevents busy-waiting when all processes are waiting for I/O
+        asm volatile("wfi");
         return;
     }
 
     if (next == old_pid && old_proc && old_proc->state == PROC_STATE_RUNNING) {
-        // Same process, nothing to do
+        // Same process and it's running - nothing to switch
+        // But if it just yielded (state == READY), it's waiting for something
+        // so we should sleep before giving it back the CPU
+        return;
+    }
+
+    if (next == old_pid && old_proc && old_proc->state == PROC_STATE_READY) {
+        // Process yielded but it's the only one - sleep until interrupt
+        // then let it run again. This prevents busy-wait loops.
+        asm volatile("wfi");
+        old_proc->state = PROC_STATE_RUNNING;
         return;
     }
 

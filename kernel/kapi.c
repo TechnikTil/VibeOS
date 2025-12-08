@@ -242,4 +242,8 @@ void kapi_init(void) {
     // RTC
     kapi.get_timestamp = rtc_get_timestamp;
     kapi.get_datetime = kapi_get_datetime;
+
+    // Power management / timing
+    kapi.wfi = wfi;
+    kapi.sleep_ms = sleep_ms;
 }

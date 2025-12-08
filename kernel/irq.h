@@ -35,4 +35,11 @@ void timer_set_interval(uint32_t interval_ms);
 // Get timer interrupt count (for debugging)
 uint64_t timer_get_ticks(void);
 
+// Wait for interrupt (low power sleep until next interrupt)
+void wfi(void);
+
+// Sleep for at least the specified number of milliseconds
+// Uses timer ticks (10ms resolution with 100Hz timer)
+void sleep_ms(uint32_t ms);
+
 #endif // IRQ_H

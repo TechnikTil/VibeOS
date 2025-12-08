@@ -232,6 +232,22 @@ uint64_t timer_get_ticks(void) {
     return timer_ticks;
 }
 
+void wfi(void) {
+    asm volatile("wfi");
+}
+
+void sleep_ms(uint32_t ms) {
+    // Timer runs at 100Hz (10ms per tick)
+    // Convert ms to ticks, rounding up
+    uint64_t ticks_to_wait = (ms + 9) / 10;
+    if (ticks_to_wait == 0) ticks_to_wait = 1;
+
+    uint64_t target = timer_ticks + ticks_to_wait;
+    while (timer_ticks < target) {
+        wfi();  // Sleep until next interrupt (timer, keyboard, mouse)
+    }
+}
+
 // Timer IRQ handler
 static void timer_handler(void) {
     timer_ticks++;

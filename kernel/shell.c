@@ -55,7 +55,11 @@ void shell_run(void) {
         pos = 0;
         while (1) {
             int c = keyboard_getc();
-            if (c < 0) continue;
+            if (c < 0) {
+                // No input - sleep until next interrupt
+                asm volatile("wfi");
+                continue;
+            }
 
             if (c == '\r' || c == '\n') {
                 console_putc('\n');

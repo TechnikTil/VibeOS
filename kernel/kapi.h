@@ -106,6 +106,10 @@ typedef struct {
     void (*get_datetime)(int *year, int *month, int *day,
                          int *hour, int *minute, int *second, int *weekday);
 
+    // Power management / timing
+    void (*wfi)(void);                   // Wait for interrupt (low power sleep)
+    void (*sleep_ms)(uint32_t ms);       // Sleep for at least ms milliseconds
+
 } kapi_t;
 
 // Window event types

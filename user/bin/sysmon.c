@@ -242,13 +242,14 @@ int main(kapi_t *kapi, int argc, char **argv) {
             }
         }
 
-        // Refresh display every ~50 yields (~500ms with cooperative scheduling)
+        // Refresh display every ~500ms (30 frames * 16ms ≈ 480ms)
         refresh_counter++;
-        if (refresh_counter >= 50) {
+        if (refresh_counter >= 30) {
             refresh_counter = 0;
             draw_all();
         }
 
+        // Yield to other processes
         api->yield();
     }
 

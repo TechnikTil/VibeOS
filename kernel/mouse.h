@@ -32,4 +32,10 @@ int mouse_has_event(void);
 // Poll for mouse events (call regularly)
 void mouse_poll(void);
 
+// Get the mouse's IRQ number
+uint32_t mouse_get_irq(void);
+
+// IRQ handler - called from irq.c
+void mouse_irq_handler(void);
+
 #endif

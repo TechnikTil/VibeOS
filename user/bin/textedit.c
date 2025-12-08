@@ -843,6 +843,7 @@ int main(kapi_t *kapi, int argc, char **argv) {
             }
         }
 
+        // Yield to other processes
         api->yield();
     }
 

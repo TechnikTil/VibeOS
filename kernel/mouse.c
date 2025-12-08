@@ -98,8 +98,12 @@ typedef struct __attribute__((packed)) {
 #define QUEUE_SIZE 16
 #define DESC_F_WRITE 2
 
+// Virtio MMIO IRQs start at 48 (SPI 16) on QEMU virt
+#define VIRTIO_IRQ_BASE 48
+
 // Mouse state
 static volatile uint32_t *mouse_base = NULL;
+static int mouse_device_index = -1;  // Which virtio device slot (for IRQ calculation)
 static virtq_desc_t *desc = NULL;
 static virtq_avail_t *avail = NULL;
 static virtq_used_t *used = NULL;
@@ -159,6 +163,7 @@ static volatile uint32_t *find_virtio_tablet(void) {
 
         // Look for "Tablet" in name
         if (name[0] == 'Q' && name[5] == 'V' && name[12] == 'T') {
+            mouse_device_index = i;
             return base;
         }
     }
@@ -338,4 +343,17 @@ int mouse_has_event(void) {
     int pending = mouse_event_pending;
     mouse_event_pending = 0;
     return pending;
+}
+
+// Get the mouse's IRQ number
+uint32_t mouse_get_irq(void) {
+    if (mouse_device_index < 0) {
+        return 0;  // Not initialized
+    }
+    return VIRTIO_IRQ_BASE + mouse_device_index;
+}
+
+// IRQ handler - called from irq.c
+void mouse_irq_handler(void) {
+    mouse_poll();
 }
