@@ -69,6 +69,14 @@ typedef struct __attribute__((packed)) {
 #define ICMP_ECHO_REPLY    0
 #define ICMP_ECHO_REQUEST  8
 
+// UDP header
+typedef struct __attribute__((packed)) {
+    uint16_t src_port;
+    uint16_t dst_port;
+    uint16_t length;
+    uint16_t checksum;
+} udp_header_t;
+
 // ARP table entry
 typedef struct {
     uint32_t ip;
@@ -116,5 +124,78 @@ const char *ip_to_str(uint32_t ip);
 
 // Helper: make IP from bytes
 #define MAKE_IP(a,b,c,d) (((uint32_t)(a)<<24)|((uint32_t)(b)<<16)|((uint32_t)(c)<<8)|(uint32_t)(d))
+
+// UDP functions
+int udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port, const void *data, uint32_t len);
+
+// UDP receive callback type
+typedef void (*udp_recv_callback_t)(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void *data, uint32_t len);
+
+// Register a UDP listener on a port
+void udp_bind(uint16_t port, udp_recv_callback_t callback);
+
+// Unregister a UDP listener
+void udp_unbind(uint16_t port);
+
+// DNS resolver (uses UDP)
+// Returns IP address, or 0 on failure
+uint32_t dns_resolve(const char *hostname);
+
+// ============ TCP ============
+
+// TCP header
+typedef struct __attribute__((packed)) {
+    uint16_t src_port;
+    uint16_t dst_port;
+    uint32_t seq;
+    uint32_t ack;
+    uint8_t data_off;    // Data offset (4 bits) + reserved (4 bits)
+    uint8_t flags;
+    uint16_t window;
+    uint16_t checksum;
+    uint16_t urgent;
+} tcp_header_t;
+
+// TCP flags
+#define TCP_FIN  0x01
+#define TCP_SYN  0x02
+#define TCP_RST  0x04
+#define TCP_PSH  0x08
+#define TCP_ACK  0x10
+#define TCP_URG  0x20
+
+// TCP states
+#define TCP_STATE_CLOSED      0
+#define TCP_STATE_SYN_SENT    1
+#define TCP_STATE_ESTABLISHED 2
+#define TCP_STATE_FIN_WAIT_1  3
+#define TCP_STATE_FIN_WAIT_2  4
+#define TCP_STATE_CLOSE_WAIT  5
+#define TCP_STATE_LAST_ACK    6
+#define TCP_STATE_TIME_WAIT   7
+
+// TCP socket handle (opaque)
+typedef int tcp_socket_t;
+
+// TCP API
+// Returns socket handle (>=0) or -1 on error
+tcp_socket_t tcp_connect(uint32_t ip, uint16_t port);
+
+// Send data on connected socket
+// Returns bytes sent or -1 on error
+int tcp_send(tcp_socket_t sock, const void *data, uint32_t len);
+
+// Receive data from connected socket
+// Returns bytes received, 0 if no data, -1 on error/closed
+int tcp_recv(tcp_socket_t sock, void *buf, uint32_t maxlen);
+
+// Close socket
+void tcp_close(tcp_socket_t sock);
+
+// Check if socket is connected
+int tcp_is_connected(tcp_socket_t sock);
+
+// Get socket state (for debugging)
+int tcp_get_state(tcp_socket_t sock);
 
 #endif

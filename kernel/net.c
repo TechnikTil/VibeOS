@@ -28,6 +28,14 @@ static volatile int ping_received = 0;
 static volatile uint16_t ping_id = 0;
 static volatile uint16_t ping_seq = 0;
 
+// UDP listener table
+#define UDP_MAX_LISTENERS 8
+typedef struct {
+    uint16_t port;
+    udp_recv_callback_t callback;
+} udp_listener_t;
+static udp_listener_t udp_listeners[UDP_MAX_LISTENERS];
+
 // Byte order helpers (network = big endian)
 static inline uint16_t htons(uint16_t x) {
     return (x >> 8) | (x << 8);
@@ -279,6 +287,34 @@ static void icmp_handle(const uint8_t *pkt, uint32_t len, uint32_t src_ip) {
     }
 }
 
+// Handle incoming UDP packet
+static void udp_handle(const uint8_t *pkt, uint32_t len, uint32_t src_ip) {
+    if (len < sizeof(udp_header_t)) return;
+
+    const udp_header_t *udp = (const udp_header_t *)pkt;
+    uint16_t src_port = ntohs(udp->src_port);
+    uint16_t dst_port = ntohs(udp->dst_port);
+    uint16_t udp_len = ntohs(udp->length);
+
+    if (udp_len < sizeof(udp_header_t) || udp_len > len) return;
+
+    const uint8_t *data = pkt + sizeof(udp_header_t);
+    uint32_t data_len = udp_len - sizeof(udp_header_t);
+
+    // Find listener for this port
+    for (int i = 0; i < UDP_MAX_LISTENERS; i++) {
+        if (udp_listeners[i].callback && udp_listeners[i].port == dst_port) {
+            udp_listeners[i].callback(src_ip, src_port, dst_port, data, data_len);
+            return;
+        }
+    }
+
+    // No listener - silently drop (don't spam debug output)
+}
+
+// Forward declaration for TCP handler
+static void tcp_handle(const uint8_t *pkt, uint32_t len, uint32_t src_ip);
+
 // Handle incoming IP packet
 static void ip_handle(const uint8_t *pkt, uint32_t len) {
     if (len < sizeof(ip_header_t)) return;
@@ -305,12 +341,10 @@ static void ip_handle(const uint8_t *pkt, uint32_t len) {
             icmp_handle(payload, payload_len, src_ip);
             break;
         case IP_PROTO_UDP:
-            // TODO: UDP handling
-            printf("[IP] UDP packet from %s (not implemented)\n", ip_to_str(src_ip));
+            udp_handle(payload, payload_len, src_ip);
             break;
         case IP_PROTO_TCP:
-            // TODO: TCP handling
-            printf("[IP] TCP packet from %s (not implemented)\n", ip_to_str(src_ip));
+            tcp_handle(payload, payload_len, src_ip);
             break;
         default:
             printf("[IP] Unknown protocol %d from %s\n", ip->protocol, ip_to_str(src_ip));
@@ -470,4 +504,673 @@ int net_ping(uint32_t ip, uint16_t seq, uint32_t timeout_ms) {
     }
 
     return -1;  // Timeout
+}
+
+// UDP bind - register a listener for a port
+void udp_bind(uint16_t port, udp_recv_callback_t callback) {
+    // Check if already bound
+    for (int i = 0; i < UDP_MAX_LISTENERS; i++) {
+        if (udp_listeners[i].port == port && udp_listeners[i].callback) {
+            // Replace existing listener
+            udp_listeners[i].callback = callback;
+            return;
+        }
+    }
+
+    // Find free slot
+    for (int i = 0; i < UDP_MAX_LISTENERS; i++) {
+        if (!udp_listeners[i].callback) {
+            udp_listeners[i].port = port;
+            udp_listeners[i].callback = callback;
+            return;
+        }
+    }
+
+    printf("[UDP] No free listener slots!\n");
+}
+
+// UDP unbind - remove a listener
+void udp_unbind(uint16_t port) {
+    for (int i = 0; i < UDP_MAX_LISTENERS; i++) {
+        if (udp_listeners[i].port == port) {
+            udp_listeners[i].callback = NULL;
+            udp_listeners[i].port = 0;
+            return;
+        }
+    }
+}
+
+// Send UDP packet
+int udp_send(uint32_t dst_ip, uint16_t src_port, uint16_t dst_port, const void *data, uint32_t len) {
+    if (len > NET_MTU - sizeof(eth_header_t) - sizeof(ip_header_t) - sizeof(udp_header_t)) {
+        return -1;
+    }
+
+    // Build UDP packet
+    uint8_t udp_buf[1500];
+    udp_header_t *udp = (udp_header_t *)udp_buf;
+
+    udp->src_port = htons(src_port);
+    udp->dst_port = htons(dst_port);
+    udp->length = htons(sizeof(udp_header_t) + len);
+    udp->checksum = 0;  // Checksum optional for IPv4
+
+    // Copy data
+    memcpy(udp_buf + sizeof(udp_header_t), data, len);
+
+    return ip_send(dst_ip, IP_PROTO_UDP, udp_buf, sizeof(udp_header_t) + len);
+}
+
+// DNS resolver
+// Simple implementation - sends query to NET_DNS and waits for response
+
+// DNS header
+typedef struct __attribute__((packed)) {
+    uint16_t id;
+    uint16_t flags;
+    uint16_t qdcount;
+    uint16_t ancount;
+    uint16_t nscount;
+    uint16_t arcount;
+} dns_header_t;
+
+// DNS response state
+static volatile int dns_response_received = 0;
+static volatile uint32_t dns_resolved_ip = 0;
+static volatile uint16_t dns_query_id = 0;
+
+// DNS response handler
+static void dns_recv_handler(uint32_t src_ip, uint16_t src_port, uint16_t dst_port, const void *data, uint32_t len) {
+    (void)src_ip; (void)src_port; (void)dst_port;
+
+    if (len < sizeof(dns_header_t)) return;
+
+    const dns_header_t *dns = (const dns_header_t *)data;
+
+    // Check if this is response to our query
+    if (ntohs(dns->id) != dns_query_id) return;
+
+    // Check flags: QR=1 (response), RCODE=0 (no error)
+    uint16_t flags = ntohs(dns->flags);
+    if (!(flags & 0x8000)) return;  // Not a response
+    if (flags & 0x000f) return;     // Error code set
+
+    uint16_t ancount = ntohs(dns->ancount);
+    if (ancount == 0) return;  // No answers
+
+    // Skip header and question section
+    const uint8_t *ptr = (const uint8_t *)data + sizeof(dns_header_t);
+    const uint8_t *end = (const uint8_t *)data + len;
+
+    // Skip question (QNAME + QTYPE + QCLASS)
+    // QNAME is a sequence of labels ending with 0
+    while (ptr < end && *ptr != 0) {
+        if ((*ptr & 0xc0) == 0xc0) {
+            // Pointer - skip 2 bytes
+            ptr += 2;
+            goto parse_answer;
+        }
+        ptr += 1 + *ptr;  // Skip length byte + label
+    }
+    if (ptr < end) ptr++;  // Skip null terminator
+    ptr += 4;  // Skip QTYPE (2) + QCLASS (2)
+
+parse_answer:
+    // Parse answer records
+    for (int i = 0; i < ancount && ptr + 12 <= end; i++) {
+        // Skip NAME (may be pointer)
+        if ((*ptr & 0xc0) == 0xc0) {
+            ptr += 2;  // Pointer
+        } else {
+            while (ptr < end && *ptr != 0) {
+                ptr += 1 + *ptr;
+            }
+            if (ptr < end) ptr++;
+        }
+
+        if (ptr + 10 > end) break;
+
+        uint16_t type = (ptr[0] << 8) | ptr[1];
+        // uint16_t class = (ptr[2] << 8) | ptr[3];
+        // uint32_t ttl = (ptr[4] << 24) | (ptr[5] << 16) | (ptr[6] << 8) | ptr[7];
+        uint16_t rdlength = (ptr[8] << 8) | ptr[9];
+        ptr += 10;
+
+        if (ptr + rdlength > end) break;
+
+        // Type A = 1 (IPv4 address)
+        if (type == 1 && rdlength == 4) {
+            // Found an A record!
+            dns_resolved_ip = MAKE_IP(ptr[0], ptr[1], ptr[2], ptr[3]);
+            dns_response_received = 1;
+            return;
+        }
+
+        ptr += rdlength;
+    }
+}
+
+// Resolve hostname to IP
+uint32_t dns_resolve(const char *hostname) {
+    // Build DNS query
+    uint8_t query[512];
+    dns_header_t *dns = (dns_header_t *)query;
+
+    // Use a simple incrementing ID
+    static uint16_t next_id = 1;
+    dns_query_id = next_id++;
+
+    dns->id = htons(dns_query_id);
+    dns->flags = htons(0x0100);  // RD (recursion desired)
+    dns->qdcount = htons(1);
+    dns->ancount = 0;
+    dns->nscount = 0;
+    dns->arcount = 0;
+
+    // Build QNAME from hostname
+    uint8_t *ptr = query + sizeof(dns_header_t);
+    const char *src = hostname;
+
+    while (*src) {
+        // Find next dot or end
+        const char *dot = src;
+        while (*dot && *dot != '.') dot++;
+
+        uint8_t label_len = dot - src;
+        if (label_len > 63) return 0;  // Label too long
+
+        *ptr++ = label_len;
+        while (src < dot) {
+            *ptr++ = *src++;
+        }
+        if (*src == '.') src++;
+    }
+    *ptr++ = 0;  // Null terminator
+
+    // QTYPE = A (1), QCLASS = IN (1)
+    *ptr++ = 0; *ptr++ = 1;  // QTYPE
+    *ptr++ = 0; *ptr++ = 1;  // QCLASS
+
+    uint32_t query_len = ptr - query;
+
+    // Bind to receive DNS responses on port 53 (we're the client, but use same port for simplicity)
+    // Actually, use ephemeral port
+    uint16_t local_port = 10053 + (dns_query_id % 100);
+    dns_response_received = 0;
+    dns_resolved_ip = 0;
+
+    udp_bind(local_port, dns_recv_handler);
+
+    // First, make sure we can reach DNS server (ARP)
+    uint32_t dns_server = NET_DNS;
+    uint32_t next_hop = dns_server;
+    if ((dns_server & NET_NETMASK) != (our_ip & NET_NETMASK)) {
+        next_hop = NET_GATEWAY;
+    }
+
+    if (!arp_lookup(next_hop)) {
+        arp_request(next_hop);
+        for (int i = 0; i < 100 && !arp_lookup(next_hop); i++) {
+            net_poll();
+            for (volatile int j = 0; j < 100000; j++);
+        }
+        if (!arp_lookup(next_hop)) {
+            udp_unbind(local_port);
+            return 0;
+        }
+    }
+
+    // Send DNS query
+    if (udp_send(dns_server, local_port, 53, query, query_len) < 0) {
+        udp_unbind(local_port);
+        return 0;
+    }
+
+    // Wait for response (up to 5 seconds)
+    for (int i = 0; i < 500 && !dns_response_received; i++) {
+        net_poll();
+        for (volatile int j = 0; j < 100000; j++);
+    }
+
+    udp_unbind(local_port);
+
+    if (dns_response_received) {
+        printf("[DNS] Resolved %s -> %s\n", hostname, ip_to_str(dns_resolved_ip));
+        return dns_resolved_ip;
+    }
+
+    printf("[DNS] Failed to resolve %s\n", hostname);
+    return 0;
+}
+
+// ============ TCP Implementation ============
+
+// TCP socket structure
+#define TCP_MAX_SOCKETS 8
+#define TCP_RX_BUF_SIZE 8192
+#define TCP_TX_BUF_SIZE 4096
+
+typedef struct {
+    int state;
+    uint32_t local_ip;
+    uint32_t remote_ip;
+    uint16_t local_port;
+    uint16_t remote_port;
+
+    // Sequence numbers
+    uint32_t send_seq;      // Next byte we'll send
+    uint32_t send_ack;      // Last ACK we sent (next byte we expect)
+    uint32_t recv_seq;      // For tracking incoming data
+
+    // Receive buffer (ring buffer)
+    uint8_t rx_buf[TCP_RX_BUF_SIZE];
+    uint32_t rx_head;       // Write position
+    uint32_t rx_tail;       // Read position
+
+    // Flags
+    uint8_t fin_received;   // Remote sent FIN
+    uint8_t fin_sent;       // We sent FIN
+} tcp_socket_internal_t;
+
+static tcp_socket_internal_t tcp_sockets[TCP_MAX_SOCKETS];
+static uint16_t tcp_next_port = 49152;  // Ephemeral port range
+
+// TCP pseudo-header for checksum
+typedef struct __attribute__((packed)) {
+    uint32_t src_ip;
+    uint32_t dst_ip;
+    uint8_t zero;
+    uint8_t protocol;
+    uint16_t tcp_len;
+} tcp_pseudo_header_t;
+
+// Calculate TCP checksum (includes pseudo-header)
+static uint16_t tcp_checksum(uint32_t src_ip, uint32_t dst_ip,
+                              const tcp_header_t *tcp, const void *data, uint32_t data_len) {
+    uint32_t sum = 0;
+
+    // Pseudo-header
+    sum += (src_ip >> 16) & 0xffff;
+    sum += src_ip & 0xffff;
+    sum += (dst_ip >> 16) & 0xffff;
+    sum += dst_ip & 0xffff;
+    sum += htons(IP_PROTO_TCP);
+    sum += htons(sizeof(tcp_header_t) + data_len);
+
+    // TCP header
+    const uint16_t *ptr = (const uint16_t *)tcp;
+    for (int i = 0; i < (int)(sizeof(tcp_header_t) / 2); i++) {
+        sum += ptr[i];
+    }
+
+    // Data
+    ptr = (const uint16_t *)data;
+    while (data_len > 1) {
+        sum += *ptr++;
+        data_len -= 2;
+    }
+    if (data_len == 1) {
+        sum += *(const uint8_t *)ptr;
+    }
+
+    // Fold 32-bit sum to 16 bits
+    while (sum >> 16) {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+
+    return ~sum;
+}
+
+// Send a TCP segment
+static int tcp_send_segment(tcp_socket_internal_t *sock, uint8_t flags,
+                            const void *data, uint32_t len) {
+    uint8_t pkt[1500];
+    tcp_header_t *tcp = (tcp_header_t *)pkt;
+
+    tcp->src_port = htons(sock->local_port);
+    tcp->dst_port = htons(sock->remote_port);
+    tcp->seq = htonl(sock->send_seq);
+    tcp->ack = htonl(sock->send_ack);
+    tcp->data_off = (5 << 4);  // 20 bytes, no options
+    tcp->flags = flags;
+    tcp->window = htons(TCP_RX_BUF_SIZE);
+    tcp->checksum = 0;
+    tcp->urgent = 0;
+
+    // Copy data
+    if (data && len > 0) {
+        memcpy(pkt + sizeof(tcp_header_t), data, len);
+    }
+
+    // Calculate checksum
+    tcp->checksum = tcp_checksum(htonl(sock->local_ip), htonl(sock->remote_ip),
+                                  tcp, data, len);
+
+    return ip_send(sock->remote_ip, IP_PROTO_TCP, pkt, sizeof(tcp_header_t) + len);
+}
+
+// Find socket by connection tuple
+static tcp_socket_internal_t *tcp_find_socket(uint32_t remote_ip, uint16_t remote_port,
+                                               uint16_t local_port) {
+    for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
+        tcp_socket_internal_t *s = &tcp_sockets[i];
+        if (s->state != TCP_STATE_CLOSED &&
+            s->remote_ip == remote_ip &&
+            s->remote_port == remote_port &&
+            s->local_port == local_port) {
+            return s;
+        }
+    }
+    return NULL;
+}
+
+// Get socket index
+static int tcp_socket_index(tcp_socket_internal_t *sock) {
+    return sock - tcp_sockets;
+}
+
+// Handle incoming TCP packet
+static void tcp_handle(const uint8_t *pkt, uint32_t len, uint32_t src_ip) {
+    if (len < sizeof(tcp_header_t)) return;
+
+    const tcp_header_t *tcp = (const tcp_header_t *)pkt;
+    uint16_t src_port = ntohs(tcp->src_port);
+    uint16_t dst_port = ntohs(tcp->dst_port);
+    uint32_t seq = ntohl(tcp->seq);
+    uint32_t ack = ntohl(tcp->ack);
+    uint8_t flags = tcp->flags;
+
+    // Calculate data offset and length
+    uint32_t data_off = (tcp->data_off >> 4) * 4;
+    if (data_off < sizeof(tcp_header_t) || data_off > len) return;
+
+    const uint8_t *data = pkt + data_off;
+    uint32_t data_len = len - data_off;
+
+    // Find matching socket
+    tcp_socket_internal_t *sock = tcp_find_socket(src_ip, src_port, dst_port);
+    if (!sock) {
+        // No socket - send RST if not a RST
+        if (!(flags & TCP_RST)) {
+            // TODO: send RST
+        }
+        return;
+    }
+
+    // Handle RST
+    if (flags & TCP_RST) {
+        printf("[TCP] Connection reset by peer\n");
+        sock->state = TCP_STATE_CLOSED;
+        return;
+    }
+
+    // State machine
+    switch (sock->state) {
+        case TCP_STATE_SYN_SENT:
+            // Expecting SYN+ACK
+            if ((flags & (TCP_SYN | TCP_ACK)) == (TCP_SYN | TCP_ACK)) {
+                if (ack == sock->send_seq + 1) {
+                    sock->send_seq = ack;
+                    sock->send_ack = seq + 1;
+                    sock->recv_seq = seq + 1;
+
+                    // Send ACK
+                    tcp_send_segment(sock, TCP_ACK, NULL, 0);
+                    sock->state = TCP_STATE_ESTABLISHED;
+                    printf("[TCP] Connection established\n");
+                }
+            }
+            break;
+
+        case TCP_STATE_ESTABLISHED:
+            // Check if ACK is valid
+            if (flags & TCP_ACK) {
+                // Update send_seq if this ACKs new data
+                if (ack > sock->send_seq - 1000 && ack <= sock->send_seq + 10000) {
+                    // Valid ACK range (rough check)
+                }
+            }
+
+            // Handle incoming data
+            if (data_len > 0) {
+                // Check if this is the next expected segment
+                if (seq == sock->send_ack) {
+                    // Copy data to receive buffer
+                    for (uint32_t i = 0; i < data_len; i++) {
+                        uint32_t next_head = (sock->rx_head + 1) % TCP_RX_BUF_SIZE;
+                        if (next_head == sock->rx_tail) {
+                            // Buffer full
+                            break;
+                        }
+                        sock->rx_buf[sock->rx_head] = data[i];
+                        sock->rx_head = next_head;
+                    }
+
+                    // Update ACK
+                    sock->send_ack = seq + data_len;
+
+                    // Send ACK
+                    tcp_send_segment(sock, TCP_ACK, NULL, 0);
+                }
+            }
+
+            // Handle FIN
+            if (flags & TCP_FIN) {
+                sock->fin_received = 1;
+                sock->send_ack = seq + data_len + 1;
+                tcp_send_segment(sock, TCP_ACK, NULL, 0);
+                sock->state = TCP_STATE_CLOSE_WAIT;
+                printf("[TCP] Received FIN, connection closing\n");
+            }
+            break;
+
+        case TCP_STATE_FIN_WAIT_1:
+            if (flags & TCP_ACK) {
+                if (flags & TCP_FIN) {
+                    // Simultaneous close
+                    sock->send_ack = seq + 1;
+                    tcp_send_segment(sock, TCP_ACK, NULL, 0);
+                    sock->state = TCP_STATE_TIME_WAIT;
+                } else {
+                    sock->state = TCP_STATE_FIN_WAIT_2;
+                }
+            }
+            break;
+
+        case TCP_STATE_FIN_WAIT_2:
+            if (flags & TCP_FIN) {
+                sock->send_ack = seq + 1;
+                tcp_send_segment(sock, TCP_ACK, NULL, 0);
+                sock->state = TCP_STATE_TIME_WAIT;
+            }
+            break;
+
+        case TCP_STATE_CLOSE_WAIT:
+            // Waiting for application to close
+            break;
+
+        case TCP_STATE_LAST_ACK:
+            if (flags & TCP_ACK) {
+                sock->state = TCP_STATE_CLOSED;
+                printf("[TCP] Connection closed\n");
+            }
+            break;
+
+        case TCP_STATE_TIME_WAIT:
+            // Should wait 2*MSL, but we just close immediately
+            sock->state = TCP_STATE_CLOSED;
+            break;
+
+        default:
+            break;
+    }
+}
+
+// Public API
+
+tcp_socket_t tcp_connect(uint32_t ip, uint16_t port) {
+    // Find free socket
+    int idx = -1;
+    for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
+        if (tcp_sockets[i].state == TCP_STATE_CLOSED) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) {
+        printf("[TCP] No free sockets\n");
+        return -1;
+    }
+
+    tcp_socket_internal_t *sock = &tcp_sockets[idx];
+    memset(sock, 0, sizeof(*sock));
+
+    sock->local_ip = our_ip;
+    sock->remote_ip = ip;
+    sock->local_port = tcp_next_port++;
+    sock->remote_port = port;
+    sock->send_seq = 1000 + (tcp_next_port * 1234);  // Simple ISN
+    sock->send_ack = 0;
+    sock->state = TCP_STATE_SYN_SENT;
+
+    // ARP resolve first
+    uint32_t next_hop = ip;
+    if ((ip & NET_NETMASK) != (our_ip & NET_NETMASK)) {
+        next_hop = NET_GATEWAY;
+    }
+
+    if (!arp_lookup(next_hop)) {
+        arp_request(next_hop);
+        for (int i = 0; i < 100 && !arp_lookup(next_hop); i++) {
+            net_poll();
+            for (volatile int j = 0; j < 100000; j++);
+        }
+        if (!arp_lookup(next_hop)) {
+            printf("[TCP] ARP failed for %s\n", ip_to_str(next_hop));
+            sock->state = TCP_STATE_CLOSED;
+            return -1;
+        }
+    }
+
+    // Send SYN
+    printf("[TCP] Connecting to %s:%d\n", ip_to_str(ip), port);
+    if (tcp_send_segment(sock, TCP_SYN, NULL, 0) < 0) {
+        sock->state = TCP_STATE_CLOSED;
+        return -1;
+    }
+
+    // Wait for SYN+ACK (up to 10 seconds)
+    for (int i = 0; i < 1000 && sock->state == TCP_STATE_SYN_SENT; i++) {
+        net_poll();
+        for (volatile int j = 0; j < 100000; j++);
+    }
+
+    if (sock->state != TCP_STATE_ESTABLISHED) {
+        printf("[TCP] Connection timeout\n");
+        sock->state = TCP_STATE_CLOSED;
+        return -1;
+    }
+
+    return idx;
+}
+
+int tcp_send(tcp_socket_t sock_id, const void *data, uint32_t len) {
+    if (sock_id < 0 || sock_id >= TCP_MAX_SOCKETS) return -1;
+
+    tcp_socket_internal_t *sock = &tcp_sockets[sock_id];
+    if (sock->state != TCP_STATE_ESTABLISHED) return -1;
+
+    // Send data in chunks (MSS ~1460, use 1400 to be safe)
+    const uint8_t *ptr = (const uint8_t *)data;
+    uint32_t sent = 0;
+
+    while (sent < len) {
+        uint32_t chunk = len - sent;
+        if (chunk > 1400) chunk = 1400;
+
+        if (tcp_send_segment(sock, TCP_ACK | TCP_PSH, ptr + sent, chunk) < 0) {
+            return sent > 0 ? (int)sent : -1;
+        }
+
+        sock->send_seq += chunk;
+        sent += chunk;
+
+        // Small delay between segments
+        for (volatile int j = 0; j < 10000; j++);
+    }
+
+    return (int)sent;
+}
+
+int tcp_recv(tcp_socket_t sock_id, void *buf, uint32_t maxlen) {
+    if (sock_id < 0 || sock_id >= TCP_MAX_SOCKETS) return -1;
+
+    tcp_socket_internal_t *sock = &tcp_sockets[sock_id];
+
+    // Poll for incoming data
+    net_poll();
+
+    // Check for data in receive buffer
+    uint8_t *dst = (uint8_t *)buf;
+    uint32_t received = 0;
+
+    while (received < maxlen && sock->rx_tail != sock->rx_head) {
+        dst[received++] = sock->rx_buf[sock->rx_tail];
+        sock->rx_tail = (sock->rx_tail + 1) % TCP_RX_BUF_SIZE;
+    }
+
+    // If no data and connection closed, return -1
+    if (received == 0) {
+        if (sock->state == TCP_STATE_CLOSE_WAIT ||
+            sock->state == TCP_STATE_CLOSED) {
+            return -1;
+        }
+        return 0;  // No data yet
+    }
+
+    return (int)received;
+}
+
+void tcp_close(tcp_socket_t sock_id) {
+    if (sock_id < 0 || sock_id >= TCP_MAX_SOCKETS) return;
+
+    tcp_socket_internal_t *sock = &tcp_sockets[sock_id];
+
+    if (sock->state == TCP_STATE_ESTABLISHED) {
+        // Send FIN
+        tcp_send_segment(sock, TCP_FIN | TCP_ACK, NULL, 0);
+        sock->send_seq++;
+        sock->fin_sent = 1;
+        sock->state = TCP_STATE_FIN_WAIT_1;
+
+        // Wait for close to complete (up to 5 seconds)
+        for (int i = 0; i < 500 && sock->state != TCP_STATE_CLOSED &&
+                                   sock->state != TCP_STATE_TIME_WAIT; i++) {
+            net_poll();
+            for (volatile int j = 0; j < 100000; j++);
+        }
+    } else if (sock->state == TCP_STATE_CLOSE_WAIT) {
+        // Send FIN
+        tcp_send_segment(sock, TCP_FIN | TCP_ACK, NULL, 0);
+        sock->send_seq++;
+        sock->state = TCP_STATE_LAST_ACK;
+
+        // Wait for ACK
+        for (int i = 0; i < 500 && sock->state != TCP_STATE_CLOSED; i++) {
+            net_poll();
+            for (volatile int j = 0; j < 100000; j++);
+        }
+    }
+
+    sock->state = TCP_STATE_CLOSED;
+}
+
+int tcp_is_connected(tcp_socket_t sock_id) {
+    if (sock_id < 0 || sock_id >= TCP_MAX_SOCKETS) return 0;
+    return tcp_sockets[sock_id].state == TCP_STATE_ESTABLISHED;
+}
+
+int tcp_get_state(tcp_socket_t sock_id) {
+    if (sock_id < 0 || sock_id >= TCP_MAX_SOCKETS) return TCP_STATE_CLOSED;
+    return tcp_sockets[sock_id].state;
 }

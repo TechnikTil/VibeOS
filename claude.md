@@ -19,7 +19,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - **Human**: Vibes only. Yells "fuck yeah" when things work. Cannot provide technical guidance.
 - **Claude**: Full technical lead. Makes all architecture decisions. Wozniak energy.
 
-## Current State (Last Updated: Session 30)
+## Current State (Last Updated: Session 31)
 - [x] Bootloader (boot/boot.S) - Sets up stack, clears BSS, jumps to kernel
 - [x] Minimal kernel (kernel/kernel.c) - UART output working
 - [x] Linker script (linker.ld) - Memory layout for QEMU virt
@@ -58,6 +58,9 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - [x] Floating point - FPU enabled, context switch saves/restores FP regs, calc uses doubles
 - [x] Networking - virtio-net driver, Ethernet, ARP, IP, ICMP working!
 - [x] Ping command - `/bin/ping` can ping internet hosts (1.1.1.1, etc.)
+- [x] UDP + DNS - hostname resolution via QEMU's DNS server (10.0.2.3)
+- [x] TCP - full TCP state machine with 3-way handshake, send/recv, close
+- [x] HTTP client - `/bin/fetch` can make HTTP requests to real websites!
 
 ## Architecture Decisions Made
 1. **Target**: QEMU virt machine, aarch64, Cortex-A72
@@ -866,8 +869,48 @@ hdiutil detach /Volumes/VIBEOS # Unmount before running QEMU
   - ping.c had wrong order, caused crash on kapi access
 - **Achievement**: Can ping 1.1.1.1 (Cloudflare) from VibeOS! Packets traverse the real internet!
 
+### Session 31
+- **UDP, DNS, TCP, and HTTP - Full network stack complete!**
+- **UDP implementation (`kernel/net.c`):**
+  - UDP listener table with callback system (8 ports)
+  - `udp_bind(port, callback)` / `udp_unbind(port)` - register listeners
+  - `udp_send(ip, src_port, dst_port, data, len)` - send packets
+  - Checksum optional (set to 0, valid for IPv4)
+- **DNS resolver (`kernel/net.c`):**
+  - `dns_resolve(hostname)` - returns IP address or 0
+  - Builds DNS query packets with proper QNAME encoding
+  - Parses A records from response
+  - Uses QEMU's built-in DNS at 10.0.2.3
+- **Ping updated:**
+  - `ping google.com` now works (resolves hostname first)
+  - Auto-detects IP vs hostname input
+- **TCP implementation (`kernel/net.c`, ~430 lines):**
+  - Full TCP state machine: CLOSED → SYN_SENT → ESTABLISHED → FIN_WAIT → etc.
+  - TCP pseudo-header checksum calculation
+  - 3-way handshake in `tcp_connect()`
+  - 8KB receive ring buffer per socket
+  - Proper FIN/ACK handling for graceful close
+  - 8 concurrent sockets supported
+  - MSS-aware segmentation (1400 byte chunks)
+- **TCP API:**
+  - `tcp_connect(ip, port)` - connect to server, returns socket handle
+  - `tcp_send(sock, data, len)` - send data, returns bytes sent
+  - `tcp_recv(sock, buf, maxlen)` - receive data (non-blocking)
+  - `tcp_close(sock)` - graceful close with FIN
+  - `tcp_is_connected(sock)` - check connection state
+- **Fetch command (`/bin/fetch`):**
+  - Usage: `fetch <hostname> [path]`
+  - Resolves hostname, opens TCP connection to port 80
+  - Sends HTTP/1.0 GET request
+  - Prints response body
+  - Example: `fetch google.com /` → got 301 redirect!
+- **kapi additions:**
+  - `dns_resolve(hostname)` - DNS resolution
+  - `tcp_connect`, `tcp_send`, `tcp_recv`, `tcp_close`, `tcp_is_connected`
+- **Achievement**: Made an HTTP request to google.com and got a real response!
+
 **NEXT SESSION TODO:**
-- UDP + DNS (resolve hostnames like google.com)
-- TCP (connection-oriented protocol)
-- HTTP client (fetch web pages!)
+- HTTPS/TLS? (complex, needs crypto)
+- Better HTTP client (follow redirects, parse headers)
+- Web server (listen for connections)
 - Maybe DOOM?

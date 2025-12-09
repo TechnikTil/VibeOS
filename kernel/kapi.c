@@ -290,4 +290,12 @@ void kapi_init(void) {
     kapi.net_poll = net_poll;
     kapi.net_get_ip = net_get_ip;
     kapi.net_get_mac = net_get_mac;
+    kapi.dns_resolve = dns_resolve;
+
+    // TCP sockets
+    kapi.tcp_connect = tcp_connect;
+    kapi.tcp_send = tcp_send;
+    kapi.tcp_recv = tcp_recv;
+    kapi.tcp_close = tcp_close;
+    kapi.tcp_is_connected = tcp_is_connected;
 }

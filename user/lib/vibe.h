@@ -137,6 +137,14 @@ typedef struct kapi {
     void (*net_poll)(void);                                           // Process incoming packets
     uint32_t (*net_get_ip)(void);                                     // Get our IP address
     void (*net_get_mac)(uint8_t *mac);                               // Get our MAC address (6 bytes)
+    uint32_t (*dns_resolve)(const char *hostname);                   // Resolve hostname to IP, returns 0 on failure
+
+    // TCP sockets
+    int (*tcp_connect)(uint32_t ip, uint16_t port);                  // Connect to server, returns socket or -1
+    int (*tcp_send)(int sock, const void *data, uint32_t len);       // Send data, returns bytes sent or -1
+    int (*tcp_recv)(int sock, void *buf, uint32_t maxlen);           // Receive data, returns bytes or 0/-1
+    void (*tcp_close)(int sock);                                      // Close connection
+    int (*tcp_is_connected)(int sock);                               // Check if connected
 } kapi_t;
 
 // Window event types

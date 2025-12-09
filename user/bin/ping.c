@@ -41,6 +41,15 @@ static void out_num(int n) {
     }
 }
 
+// Check if string is an IP address (contains only digits and dots)
+static int is_ip_address(const char *s) {
+    while (*s) {
+        if ((*s < '0' || *s > '9') && *s != '.') return 0;
+        s++;
+    }
+    return 1;
+}
+
 // Parse IP address from string "a.b.c.d"
 static int parse_ip(const char *s, uint32_t *ip) {
     int parts[4] = {0, 0, 0, 0};
@@ -83,22 +92,43 @@ int main(kapi_t *kapi, int argc, char **argv) {
     k = kapi;
 
     if (argc < 2) {
-        out_puts("Usage: ping <ip>\n");
+        out_puts("Usage: ping <ip or hostname>\n");
         out_puts("Example: ping 10.0.2.2\n");
+        out_puts("         ping google.com\n");
         return 1;
     }
 
     uint32_t ip;
-    if (parse_ip(argv[1], &ip) < 0) {
-        out_puts("Invalid IP address: ");
-        out_puts(argv[1]);
-        out_puts("\n");
-        return 1;
+    const char *target = argv[1];
+
+    // Check if it's an IP address or hostname
+    if (is_ip_address(target)) {
+        if (parse_ip(target, &ip) < 0) {
+            out_puts("Invalid IP address: ");
+            out_puts(target);
+            out_puts("\n");
+            return 1;
+        }
+    } else {
+        // It's a hostname - resolve via DNS
+        out_puts("Resolving ");
+        out_puts(target);
+        out_puts("...\n");
+
+        ip = k->dns_resolve(target);
+        if (ip == 0) {
+            out_puts("Could not resolve hostname: ");
+            out_puts(target);
+            out_puts("\n");
+            return 1;
+        }
     }
 
     out_puts("PING ");
+    out_puts(target);
+    out_puts(" (");
     print_ip(ip);
-    out_puts("\n");
+    out_puts(")\n");
 
     int sent = 0;
     int received = 0;
