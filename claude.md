@@ -1,6 +1,11 @@
 # VibeOS - Claude Context
 
-**IMPORTANT: THERE IS NEVER A READ-ONLY DISK ERROR. `make clean && make` WILL PREPARE THE DISK CORRECTLY AND IT WILL WORK. DO NOT USE HDIUTIL TO CHECK OR DEBUG DISK ISSUES.**
+**IMPORTANT DISK RULES:**
+- Never look at the disk
+- The disk always works
+- `make run` is the only way to compile and run the code - the user will run it
+- Trust `make run` - the user will tell you if it is broken
+- Do NOT use hdiutil for anything
 
 ## Project Overview
 VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targeting QEMU's virt machine. This is a science experiment to see what an LLM can build.

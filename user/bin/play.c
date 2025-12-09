@@ -6,7 +6,7 @@
 
 #include "../lib/vibe.h"
 
-// Disable SIMD and include minimp3 (uses stub headers in user/lib/)
+// Disable SIMD - freestanding environment has no arm_neon.h
 #define MINIMP3_NO_SIMD
 #define MINIMP3_IMPLEMENTATION
 #include "../../vendor/minimp3.h"

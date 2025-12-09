@@ -7,7 +7,7 @@
 #include "../lib/vibe.h"
 #include "../lib/gfx.h"
 
-// Disable SIMD for minimp3
+// Disable SIMD - freestanding environment has no arm_neon.h
 #define MINIMP3_NO_SIMD
 #define MINIMP3_IMPLEMENTATION
 #include "../../vendor/minimp3.h"
@@ -68,8 +68,40 @@ static uint32_t pause_elapsed_ms = 0;  // Elapsed time when paused
 static int album_scroll = 0;
 static int track_scroll = 0;
 
-// Loading state
+// Loading state machine
+typedef enum {
+    LOAD_STATE_IDLE = 0,
+    LOAD_STATE_LOADING_FILE,
+    LOAD_STATE_COUNTING_SAMPLES,
+    LOAD_STATE_DECODING,
+    LOAD_STATE_STARTING_PLAYBACK
+} load_state_t;
+
+static load_state_t load_state = LOAD_STATE_IDLE;
 static int is_loading = 0;
+
+// Loading progress tracking
+static int load_progress = 0;  // 0-100 percent
+static int load_target_track = -1;
+
+// File loading state
+static uint8_t *load_mp3_data = NULL;
+static int load_file_size = 0;
+static int load_file_offset = 0;
+static void *load_file_handle = NULL;
+
+// Decode state
+static mp3dec_t load_mp3d;
+static const uint8_t *load_decode_ptr = NULL;
+static int load_decode_remaining = 0;
+static uint32_t load_total_samples = 0;
+static int load_channels = 0;
+static int16_t *load_out_ptr = NULL;
+static uint32_t load_decoded_samples = 0;
+
+// Chunk sizes for non-blocking operations
+#define FILE_CHUNK_SIZE     (32 * 1024)   // 32KB per file read chunk
+#define DECODE_FRAMES_PER_YIELD  20        // Decode 20 MP3 frames per yield
 
 // ============ Drawing Helpers ============
 
@@ -267,7 +299,10 @@ static void draw_controls(void) {
         draw_text_clip(8, y + 8, display_name, BLACK, WHITE, 180);
         draw_text_clip(8, y + 26, albums[selected_album].name, GRAY, WHITE, 180);
     } else if (is_loading) {
-        draw_string(8, y + 16, "Loading...", BLACK, WHITE);
+        const char *status = "Loading...";
+        if (load_state == LOAD_STATE_LOADING_FILE) status = "Reading file...";
+        else if (load_state == LOAD_STATE_DECODING) status = "Decoding...";
+        draw_string(8, y + 16, status, BLACK, WHITE);
     } else {
         draw_string(8, y + 16, "No track", GRAY, WHITE);
     }
@@ -473,24 +508,29 @@ static int play_track(int track_idx) {
     }
 
     is_loading = 1;
+    load_state = LOAD_STATE_LOADING_FILE;
     draw_all();
+    api->yield();
 
     // Load file
     void *file = api->open(tracks[track_idx].path);
     if (!file) {
         is_loading = 0;
+        load_state = LOAD_STATE_IDLE;
         return -1;
     }
 
     int size = api->file_size(file);
     if (size <= 0) {
         is_loading = 0;
+        load_state = LOAD_STATE_IDLE;
         return -1;
     }
 
     uint8_t *mp3_data = api->malloc(size);
     if (!mp3_data) {
         is_loading = 0;
+        load_state = LOAD_STATE_IDLE;
         return -1;
     }
 
@@ -501,58 +541,42 @@ static int play_track(int track_idx) {
         offset += n;
     }
 
-    // Decode MP3 - first pass to count samples
+    // Switch to decoding state
+    load_state = LOAD_STATE_DECODING;
+    draw_all();
+    api->yield();
+
+    // Single-pass decode with pre-allocated buffer
+    // For 10MB MP3 @ 128kbps stereo: ~50 min = ~530MB PCM
+    // Ratio ~53:1, but 320kbps would be ~21:1. Use 15x for safety.
+    uint32_t max_pcm_bytes = (uint32_t)size * 15;
+    pcm_buffer = api->malloc(max_pcm_bytes);
+    if (!pcm_buffer) {
+        api->free(mp3_data);
+        is_loading = 0;
+        load_state = LOAD_STATE_IDLE;
+        return -1;
+    }
+
     mp3dec_t mp3d;
     mp3dec_init(&mp3d);
-
     mp3dec_frame_info_t info;
     int16_t temp_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
 
     const uint8_t *ptr = mp3_data;
     int remaining = size;
-    uint32_t total_samples = 0;
-    int channels = 0;
-
-    // First pass: scan to count total samples (pass NULL for pcm to just parse headers)
-    while (remaining > 0) {
-        int samples = mp3dec_decode_frame(&mp3d, ptr, remaining, NULL, &info);
-        if (info.frame_bytes == 0) break;
-        if (samples > 0) {
-            total_samples += samples;
-            if (channels == 0) {
-                channels = info.channels;
-                pcm_sample_rate = info.hz;
-            }
-        }
-        ptr += info.frame_bytes;
-        remaining -= info.frame_bytes;
-    }
-
-    if (total_samples == 0 || channels == 0) {
-        api->free(mp3_data);
-        is_loading = 0;
-        return -1;
-    }
-
-    // Allocate buffer for stereo output
-    pcm_buffer = api->malloc(total_samples * 2 * sizeof(int16_t));
-    if (!pcm_buffer) {
-        api->free(mp3_data);
-        is_loading = 0;
-        return -1;
-    }
-
-    // Second pass: actually decode
-    mp3dec_init(&mp3d);
-    ptr = mp3_data;
-    remaining = size;
     int16_t *out_ptr = pcm_buffer;
     uint32_t decoded_samples = 0;
+    int channels = 0;
 
     while (remaining > 0) {
         int samples = mp3dec_decode_frame(&mp3d, ptr, remaining, temp_pcm, &info);
         if (info.frame_bytes == 0) break;
         if (samples > 0) {
+            if (channels == 0) {
+                channels = info.channels;
+                pcm_sample_rate = info.hz;
+            }
             decoded_samples += samples;
             if (channels == 1) {
                 for (int i = 0; i < samples; i++) {
@@ -571,11 +595,20 @@ static int play_track(int track_idx) {
 
     api->free(mp3_data);
 
+    if (decoded_samples == 0 || channels == 0) {
+        api->free(pcm_buffer);
+        pcm_buffer = NULL;
+        is_loading = 0;
+        load_state = LOAD_STATE_IDLE;
+        return -1;
+    }
+
     // Use actual decoded sample count for accurate duration
     pcm_samples = decoded_samples;
     playing_track = track_idx;
     is_playing = 1;
     is_loading = 0;
+    load_state = LOAD_STATE_IDLE;
     playback_start_tick = api->get_uptime_ticks ? api->get_uptime_ticks() : 0;
     pause_elapsed_ms = 0;
 
