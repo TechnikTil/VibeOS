@@ -3,3 +3,6 @@ build/
 *.elf
 *.bin
 .DS_Store
+disk.img
+Music/
+beep.mp3

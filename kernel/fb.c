@@ -159,8 +159,8 @@ int fb_init(void) {
     }
 
     // Set up our desired resolution
-    fb_width = 800;
-    fb_height = 600;
+    fb_width = 1024;
+    fb_height = 768;
     fb_pitch = fb_width * 4;  // 4 bytes per pixel (32-bit)
 
     // Allocate framebuffer from heap
