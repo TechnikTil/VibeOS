@@ -145,6 +145,13 @@ typedef struct kapi {
     int (*tcp_recv)(int sock, void *buf, uint32_t maxlen);           // Receive data, returns bytes or 0/-1
     void (*tcp_close)(int sock);                                      // Close connection
     int (*tcp_is_connected)(int sock);                               // Check if connected
+
+    // TLS (HTTPS) sockets
+    int (*tls_connect)(uint32_t ip, uint16_t port, const char *hostname);  // Connect with TLS
+    int (*tls_send)(int sock, const void *data, uint32_t len);             // Send encrypted
+    int (*tls_recv)(int sock, void *buf, uint32_t maxlen);                 // Receive decrypted
+    void (*tls_close)(int sock);                                           // Close TLS
+    int (*tls_is_connected)(int sock);                                     // Check connected
 } kapi_t;
 
 // Window event types

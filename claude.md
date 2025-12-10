@@ -19,7 +19,7 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - **Human**: Vibes only. Yells "fuck yeah" when things work. Cannot provide technical guidance.
 - **Claude**: Full technical lead. Makes all architecture decisions. Wozniak energy.
 
-## Current State (Last Updated: Session 31)
+## Current State (Last Updated: Session 33)
 - [x] Bootloader (boot/boot.S) - Sets up stack, clears BSS, jumps to kernel
 - [x] Minimal kernel (kernel/kernel.c) - UART output working
 - [x] Linker script (linker.ld) - Memory layout for QEMU virt
@@ -62,6 +62,8 @@ VibeOS is a hobby operating system built from scratch for aarch64 (ARM64), targe
 - [x] TCP - full TCP state machine with 3-way handshake, send/recv, close
 - [x] HTTP client - `/bin/fetch` can make HTTP requests to real websites!
 - [x] Web Browser - `/bin/browser` GUI browser with HTML rendering, works on HTTP sites
+- [x] TLS 1.2 - Full HTTPS support via TLSe library, ECC key exchange working!
+- [x] HTTPS client - `/bin/fetch` can make HTTPS requests to google.com, etc!
 
 ## Architecture Decisions Made
 1. **Target**: QEMU virt machine, aarch64, Cortex-A72

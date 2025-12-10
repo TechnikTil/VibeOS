@@ -747,7 +747,7 @@ uint32_t dns_resolve(const char *hostname) {
 
 // TCP socket structure
 #define TCP_MAX_SOCKETS 8
-#define TCP_RX_BUF_SIZE 8192
+#define TCP_RX_BUF_SIZE 32768  // 32KB - TLS certs can be large
 #define TCP_TX_BUF_SIZE 4096
 
 typedef struct {
@@ -935,19 +935,22 @@ static void tcp_handle(const uint8_t *pkt, uint32_t len, uint32_t src_ip) {
             if (data_len > 0) {
                 // Check if this is the next expected segment
                 if (seq == sock->send_ack) {
-                    // Copy data to receive buffer
+                    // Copy data to receive buffer, track how many bytes actually stored
+                    uint32_t bytes_stored = 0;
                     for (uint32_t i = 0; i < data_len; i++) {
                         uint32_t next_head = (sock->rx_head + 1) % TCP_RX_BUF_SIZE;
                         if (next_head == sock->rx_tail) {
-                            // Buffer full
+                            // Buffer full - stop here
                             break;
                         }
                         sock->rx_buf[sock->rx_head] = data[i];
                         sock->rx_head = next_head;
+                        bytes_stored++;
                     }
 
-                    // Update ACK
-                    sock->send_ack = seq + data_len;
+                    // CRITICAL: Only ACK bytes we actually stored!
+                    // Otherwise we tell sender we got data that was dropped.
+                    sock->send_ack = seq + bytes_stored;
 
                     // Send ACK
                     tcp_send_segment(sock, TCP_ACK, NULL, 0);

@@ -44,7 +44,11 @@ DISK_SIZE = 1024
 # Compiler flags - YOLO -O3
 # Floating point enabled (no -mgeneral-regs-only)
 # Use -mstrict-align to avoid unaligned SIMD accesses
-CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=cortex-a72 -mstrict-align -Wall -Wextra -O3 -I$(KERNEL_DIR)
+# -I$(KERNEL_DIR)/libc is for TLSe to find our stdlib stubs
+CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=cortex-a72 -mstrict-align -Wall -Wextra -O3 -I$(KERNEL_DIR) -I$(KERNEL_DIR)/libc
+
+# Special flags for TLS (TLSe is huge and noisy)
+TLS_CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=cortex-a72 -mstrict-align -O2 -I$(KERNEL_DIR) -I$(KERNEL_DIR)/libc -w
 ASFLAGS = -mcpu=cortex-a72
 LDFLAGS = -nostdlib -T linker.ld
 
@@ -79,6 +83,11 @@ $(BOOT_OBJ): $(BOOT_SRC) | $(BUILD_DIR)
 # Kernel C objects
 $(BUILD_DIR)/%.o: $(KERNEL_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# Special rule for TLS (includes huge third-party library)
+$(BUILD_DIR)/tls.o: $(KERNEL_DIR)/tls.c | $(BUILD_DIR)
+	@echo "Building TLS (this takes a while)..."
+	$(CC) $(TLS_CFLAGS) -c $< -o $@
 
 # Kernel assembly objects
 $(BUILD_DIR)/%.o: $(KERNEL_DIR)/%.S | $(BUILD_DIR)

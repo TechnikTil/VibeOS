@@ -146,6 +146,13 @@ typedef struct {
     void (*tcp_close)(int sock);                                      // Close connection
     int (*tcp_is_connected)(int sock);                               // Check if connected
 
+    // TLS (HTTPS) sockets
+    int (*tls_connect)(uint32_t ip, uint16_t port, const char *hostname);  // Connect with TLS, returns socket or -1
+    int (*tls_send)(int sock, const void *data, uint32_t len);             // Send encrypted data
+    int (*tls_recv)(int sock, void *buf, uint32_t maxlen);                 // Receive decrypted data
+    void (*tls_close)(int sock);                                           // Close TLS connection
+    int (*tls_is_connected)(int sock);                                     // Check if connected
+
 } kapi_t;
 
 // Window event types

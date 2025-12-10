@@ -1,11 +1,12 @@
 /*
- * VibeOS fetch command - HTTP client
+ * VibeOS fetch command - HTTP/HTTPS client
  *
  * Usage: fetch <url>
  * Example: fetch http://example.com/
- *          fetch http://httpbin.org/get
+ *          fetch https://google.com/
  *
  * Features:
+ * - HTTP and HTTPS support
  * - Follows redirects (301, 302, 307, 308)
  * - Parses HTTP headers
  * - Shows response info
@@ -88,11 +89,19 @@ typedef struct {
     char host[256];
     char path[512];
     int port;
+    int use_tls;  // 1 for https, 0 for http
 } url_t;
 
 static int parse_url(const char *url, url_t *out) {
-    // Skip http://
-    if (str_eqn(url, "http://", 7)) {
+    out->use_tls = 0;
+    out->port = 80;
+
+    // Check for https://
+    if (str_eqn(url, "https://", 8)) {
+        url += 8;
+        out->use_tls = 1;
+        out->port = 443;
+    } else if (str_eqn(url, "http://", 7)) {
         url += 7;
     }
 
@@ -106,7 +115,6 @@ static int parse_url(const char *url, url_t *out) {
     str_ncpy(out->host, host_start, host_len);
 
     // Parse port if present
-    out->port = 80;
     if (*host_end == ':') {
         host_end++;
         out->port = parse_int(host_end);
@@ -196,18 +204,24 @@ static int parse_headers(const char *buf, int len, http_response_t *resp) {
     return 0;
 }
 
-// Make HTTP request
-static int http_get(const char *host, const char *path, int port,
-                    char *response, int max_response, http_response_t *resp) {
+// Make HTTP/HTTPS request
+static int http_get(url_t *url, char *response, int max_response, http_response_t *resp) {
     // Resolve hostname
-    uint32_t ip = k->dns_resolve(host);
+    uint32_t ip = k->dns_resolve(url->host);
     if (ip == 0) {
         out_puts("DNS resolution failed\n");
         return -1;
     }
 
-    // Connect
-    int sock = k->tcp_connect(ip, port);
+    // Connect (TLS or plain TCP)
+    int sock;
+    if (url->use_tls) {
+        out_puts("Connecting with TLS...\n");
+        sock = k->tls_connect(ip, url->port, url->host);
+    } else {
+        sock = k->tcp_connect(ip, url->port);
+    }
+
     if (sock < 0) {
         out_puts("Connection failed\n");
         return -1;
@@ -220,7 +234,7 @@ static int http_get(const char *host, const char *path, int port,
     // GET /path HTTP/1.0\r\n
     const char *s = "GET ";
     while (*s) *p++ = *s++;
-    s = path;
+    s = url->path;
     while (*s) *p++ = *s++;
     s = " HTTP/1.0\r\n";
     while (*s) *p++ = *s++;
@@ -228,12 +242,12 @@ static int http_get(const char *host, const char *path, int port,
     // Host: hostname\r\n
     s = "Host: ";
     while (*s) *p++ = *s++;
-    s = host;
+    s = url->host;
     while (*s) *p++ = *s++;
     *p++ = '\r'; *p++ = '\n';
 
     // User-Agent
-    s = "User-Agent: VibeOS/1.0\r\n";
+    s = "User-Agent: Mozilla/5.0 (compatible; VibeOS)\r\n";
     while (*s) *p++ = *s++;
 
     // Connection: close\r\n\r\n
@@ -242,9 +256,17 @@ static int http_get(const char *host, const char *path, int port,
     *p = '\0';
 
     // Send request
-    if (k->tcp_send(sock, request, p - request) < 0) {
+    int sent;
+    if (url->use_tls) {
+        sent = k->tls_send(sock, request, p - request);
+    } else {
+        sent = k->tcp_send(sock, request, p - request);
+    }
+
+    if (sent < 0) {
         out_puts("Send failed\n");
-        k->tcp_close(sock);
+        if (url->use_tls) k->tls_close(sock);
+        else k->tcp_close(sock);
         return -1;
     }
 
@@ -253,7 +275,13 @@ static int http_get(const char *host, const char *path, int port,
     int timeout = 0;
 
     while (total < max_response - 1 && timeout < 500) {
-        int n = k->tcp_recv(sock, response + total, max_response - 1 - total);
+        int n;
+        if (url->use_tls) {
+            n = k->tls_recv(sock, response + total, max_response - 1 - total);
+        } else {
+            n = k->tcp_recv(sock, response + total, max_response - 1 - total);
+        }
+
         if (n < 0) break;  // Connection closed
         if (n == 0) {
             k->net_poll();
@@ -278,7 +306,9 @@ static int http_get(const char *host, const char *path, int port,
     }
 
     response[total] = '\0';
-    k->tcp_close(sock);
+
+    if (url->use_tls) k->tls_close(sock);
+    else k->tcp_close(sock);
 
     // Parse headers if not done yet
     if (resp->header_len == 0) {
@@ -299,6 +329,7 @@ int main(kapi_t *kapi, int argc, char **argv) {
     if (argc < 2) {
         out_puts("Usage: fetch <url>\n");
         out_puts("Example: fetch http://example.com/\n");
+        out_puts("         fetch https://google.com/\n");
         return 1;
     }
 
@@ -321,12 +352,14 @@ int main(kapi_t *kapi, int argc, char **argv) {
     const int max_redirects = 5;
 
     while (1) {
-        out_puts("Fetching http://");
+        out_puts("Fetching ");
+        out_puts(url.use_tls ? "https://" : "http://");
         out_puts(url.host);
         out_puts(url.path);
         out_puts("\n");
 
-        int len = http_get(url.host, url.path, url.port, response, 65536, &resp);
+        memset(&resp, 0, sizeof(resp));
+        int len = http_get(&url, response, 65536, &resp);
         if (len < 0) {
             k->free(response);
             return 1;
@@ -359,10 +392,10 @@ int main(kapi_t *kapi, int argc, char **argv) {
 
             // Check if it's a relative URL (starts with /)
             if (resp.location[0] == '/') {
-                // Just update path, keep same host
+                // Just update path, keep same host and protocol
                 str_cpy(url.path, resp.location);
             } else {
-                // Parse new URL
+                // Parse new URL (might switch http->https)
                 if (parse_url(resp.location, &url) < 0) {
                     out_puts("Invalid redirect URL\n");
                     k->free(response);

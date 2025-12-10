@@ -61,10 +61,21 @@ typedef struct {
     char host[256];
     char path[512];
     int port;
+    int use_tls;  // 1 for https, 0 for http
 } url_t;
 
 static int parse_url(const char *url, url_t *out) {
-    if (str_eqn(url, "http://", 7)) url += 7;
+    out->use_tls = 0;
+    out->port = 80;
+
+    // Check for https://
+    if (str_eqn(url, "https://", 8)) {
+        url += 8;
+        out->use_tls = 1;
+        out->port = 443;
+    } else if (str_eqn(url, "http://", 7)) {
+        url += 7;
+    }
 
     const char *host_start = url;
     const char *host_end = url;
@@ -74,7 +85,7 @@ static int parse_url(const char *url, url_t *out) {
     if (host_len >= 256) return -1;
     str_ncpy(out->host, host_start, host_len);
 
-    out->port = 80;
+    // Parse port if present
     if (*host_end == ':') {
         host_end++;
         out->port = parse_int(host_end);
@@ -142,12 +153,17 @@ static int parse_headers(const char *buf, int len, http_response_t *resp) {
     return 0;
 }
 
-static int http_get(const char *host, const char *path, int port,
-                    char *response, int max_response, http_response_t *resp) {
-    uint32_t ip = k->dns_resolve(host);
+static int http_get(url_t *url, char *response, int max_response, http_response_t *resp) {
+    uint32_t ip = k->dns_resolve(url->host);
     if (ip == 0) return -1;
 
-    int sock = k->tcp_connect(ip, port);
+    // Connect (TLS or plain TCP)
+    int sock;
+    if (url->use_tls) {
+        sock = k->tls_connect(ip, url->port, url->host);
+    } else {
+        sock = k->tcp_connect(ip, url->port);
+    }
     if (sock < 0) return -1;
 
     char request[1024];
@@ -155,15 +171,23 @@ static int http_get(const char *host, const char *path, int port,
     const char *s;
 
     s = "GET "; while (*s) *p++ = *s++;
-    s = path; while (*s) *p++ = *s++;
+    s = url->path; while (*s) *p++ = *s++;
     s = " HTTP/1.0\r\nHost: "; while (*s) *p++ = *s++;
-    s = host; while (*s) *p++ = *s++;
+    s = url->host; while (*s) *p++ = *s++;
     s = "\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\nAccept: text/html,*/*\r\nConnection: close\r\n\r\n";
     while (*s) *p++ = *s++;
     *p = '\0';
 
-    if (k->tcp_send(sock, request, p - request) < 0) {
-        k->tcp_close(sock);
+    // Send request
+    int sent;
+    if (url->use_tls) {
+        sent = k->tls_send(sock, request, p - request);
+    } else {
+        sent = k->tcp_send(sock, request, p - request);
+    }
+    if (sent < 0) {
+        if (url->use_tls) k->tls_close(sock);
+        else k->tcp_close(sock);
         return -1;
     }
 
@@ -172,7 +196,12 @@ static int http_get(const char *host, const char *path, int port,
     resp->header_len = 0;
 
     while (total < max_response - 1 && timeout < 500) {
-        int n = k->tcp_recv(sock, response + total, max_response - 1 - total);
+        int n;
+        if (url->use_tls) {
+            n = k->tls_recv(sock, response + total, max_response - 1 - total);
+        } else {
+            n = k->tcp_recv(sock, response + total, max_response - 1 - total);
+        }
         if (n < 0) break;  // Connection closed
         if (n == 0) {
             k->net_poll();
@@ -197,7 +226,8 @@ static int http_get(const char *host, const char *path, int port,
     }
 
     response[total] = '\0';
-    k->tcp_close(sock);
+    if (url->use_tls) k->tls_close(sock);
+    else k->tcp_close(sock);
     if (resp->header_len == 0) parse_headers(response, total, resp);
     return total;
 }
@@ -653,7 +683,7 @@ static void resolve_url(const char *href, char *out, int max_len) {
         return;
     }
 
-    // Parse current URL to get host
+    // Parse current URL to get host and scheme
     url_t base;
     if (parse_url(current_url, &base) < 0) {
         str_ncpy(out, href, max_len - 1);
@@ -663,8 +693,8 @@ static void resolve_url(const char *href, char *out, int max_len) {
     char *p = out;
     char *end = out + max_len - 1;
 
-    // Build http://host
-    const char *s = "http://";
+    // Build scheme://host (preserve https if current page is https)
+    const char *s = base.use_tls ? "https://" : "http://";
     while (*s && p < end) *p++ = *s++;
     s = base.host;
     while (*s && p < end) *p++ = *s++;
@@ -736,7 +766,7 @@ static void navigate_internal(const char *url, int add_to_history) {
     int redirects = 0;
 
     while (1) {
-        int len = http_get(parsed.host, parsed.path, parsed.port, response, 131072, &resp);
+        int len = http_get(&parsed, response, 131072, &resp);
 
         if (len <= 0) {
             add_block("Error: No response from server", 30, 1, 0, 0, 0, 0);
@@ -744,18 +774,13 @@ static void navigate_internal(const char *url, int add_to_history) {
         }
 
         if (is_redirect(resp.status_code) && resp.location[0] && redirects < 5) {
-            // Don't follow HTTPS redirects - just render whatever content we got
-            if (str_eqn(resp.location, "https://", 8)) {
-                // HTTPS redirect - render the response body as-is
-                if (resp.header_len > 0 && resp.header_len < len) {
-                    parse_html(response + resp.header_len, len - resp.header_len);
-                }
-                break;
-            }
             redirects++;
+            // Check if it's a relative URL (starts with /)
             if (resp.location[0] == '/') {
+                // Just update path, keep same host and protocol
                 str_cpy(parsed.path, resp.location);
             } else {
+                // Parse new URL (might switch http->https or vice versa)
                 parse_url(resp.location, &parsed);
             }
             continue;

@@ -12,7 +12,7 @@
 #include <stddef.h>
 
 #define PROCESS_NAME_MAX 32
-#define PROCESS_STACK_SIZE 0x10000  // 64KB per process
+#define PROCESS_STACK_SIZE 0x100000  // 1MB per process (TLS crypto needs lots of stack)
 #define MAX_PROCESSES 16
 
 // Process states

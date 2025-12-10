@@ -199,3 +199,27 @@ char *strtok_r(char *str, const char *delim, char **saveptr) {
 
     return start;
 }
+
+char *strstr(const char *haystack, const char *needle) {
+    if (!*needle) return (char *)haystack;
+
+    for (; *haystack; haystack++) {
+        const char *h = haystack;
+        const char *n = needle;
+        while (*h && *n && *h == *n) {
+            h++;
+            n++;
+        }
+        if (!*n) return (char *)haystack;
+    }
+    return NULL;
+}
+
+void *memchr(const void *s, int c, size_t n) {
+    const unsigned char *p = (const unsigned char *)s;
+    unsigned char uc = (unsigned char)c;
+    for (size_t i = 0; i < n; i++) {
+        if (p[i] == uc) return (void *)(p + i);
+    }
+    return NULL;
+}

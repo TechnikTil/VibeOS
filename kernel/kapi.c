@@ -15,6 +15,7 @@
 #include "virtio_sound.h"
 #include "fat32.h"
 #include "net.h"
+#include "tls.h"
 
 // Global kernel API instance
 kapi_t kapi;
@@ -298,4 +299,11 @@ void kapi_init(void) {
     kapi.tcp_recv = tcp_recv;
     kapi.tcp_close = tcp_close;
     kapi.tcp_is_connected = tcp_is_connected;
+
+    // TLS (HTTPS) sockets
+    kapi.tls_connect = tls_connect;
+    kapi.tls_send = tls_send;
+    kapi.tls_recv = tls_recv;
+    kapi.tls_close = tls_close;
+    kapi.tls_is_connected = tls_is_connected;
 }
