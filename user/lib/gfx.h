@@ -113,6 +113,90 @@ static inline void gfx_draw_string_clip(gfx_ctx_t *ctx, int x, int y, const char
     }
 }
 
+// ============ TTF Text Drawing ============
+
+// Draw a TTF glyph (grayscale antialiased)
+// The glyph bitmap is grayscale 0-255, we blend with background
+static inline void gfx_draw_ttf_glyph(gfx_ctx_t *ctx, int x, int y, ttf_glyph_t *glyph, uint32_t fg, uint32_t bg) {
+    if (!glyph || !glyph->bitmap) return;
+
+    // Apply glyph offsets
+    x += glyph->xoff;
+    y += glyph->yoff;
+
+    uint8_t fg_r = (fg >> 16) & 0xFF;
+    uint8_t fg_g = (fg >> 8) & 0xFF;
+    uint8_t fg_b = fg & 0xFF;
+    uint8_t bg_r = (bg >> 16) & 0xFF;
+    uint8_t bg_g = (bg >> 8) & 0xFF;
+    uint8_t bg_b = bg & 0xFF;
+
+    for (int row = 0; row < glyph->height; row++) {
+        for (int col = 0; col < glyph->width; col++) {
+            int px = x + col;
+            int py = y + row;
+            if (px < 0 || px >= ctx->width || py < 0 || py >= ctx->height) continue;
+
+            uint8_t alpha = glyph->bitmap[row * glyph->width + col];
+            if (alpha == 0) continue;  // Fully transparent
+
+            if (alpha == 255) {
+                // Fully opaque
+                ctx->buffer[py * ctx->width + px] = fg;
+            } else {
+                // Blend
+                uint8_t r = (fg_r * alpha + bg_r * (255 - alpha)) / 255;
+                uint8_t g = (fg_g * alpha + bg_g * (255 - alpha)) / 255;
+                uint8_t b = (fg_b * alpha + bg_b * (255 - alpha)) / 255;
+                ctx->buffer[py * ctx->width + px] = (r << 16) | (g << 8) | b;
+            }
+        }
+    }
+}
+
+// Draw a TTF string at given size and style
+// Returns the width of the drawn string in pixels
+static inline int gfx_draw_ttf_string(gfx_ctx_t *ctx, kapi_t *k, int x, int y,
+                                       const char *s, int size, int style,
+                                       uint32_t fg, uint32_t bg) {
+    if (!k->ttf_is_ready || !k->ttf_is_ready()) {
+        // Fallback to bitmap font
+        gfx_draw_string(ctx, x, y, s, fg, bg);
+        return strlen(s) * 8;
+    }
+
+    // Get font metrics for baseline
+    int ascent, descent, line_gap;
+    k->ttf_get_metrics(size, &ascent, &descent, &line_gap);
+
+    int start_x = x;
+    int prev_cp = 0;
+
+    while (*s) {
+        int cp = (unsigned char)*s;
+
+        // Add kerning
+        if (prev_cp) {
+            x += k->ttf_get_kerning(prev_cp, cp, size);
+        }
+
+        ttf_glyph_t *glyph = (ttf_glyph_t *)k->ttf_get_glyph(cp, size, style);
+        if (glyph) {
+            // y + ascent puts the baseline at y + ascent
+            // glyph->yoff is relative to baseline (negative = above)
+            gfx_draw_ttf_glyph(ctx, x, y + ascent, glyph, fg, bg);
+            x += glyph->advance;
+        } else {
+            x += size / 2;  // Default advance for missing glyph
+        }
+
+        prev_cp = cp;
+        s++;
+    }
+
+    return x - start_x;
+}
+
 // ============ Patterns (for desktop background, etc.) ============
 
 // Classic Mac diagonal checkerboard pattern

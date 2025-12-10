@@ -152,7 +152,35 @@ typedef struct kapi {
     int (*tls_recv)(int sock, void *buf, uint32_t maxlen);                 // Receive decrypted
     void (*tls_close)(int sock);                                           // Close TLS
     int (*tls_is_connected)(int sock);                                     // Check connected
+
+    // TrueType font rendering
+    void *(*ttf_get_glyph)(int codepoint, int size, int style);  // Returns ttf_glyph_t*
+    int (*ttf_get_advance)(int codepoint, int size);
+    int (*ttf_get_kerning)(int cp1, int cp2, int size);
+    void (*ttf_get_metrics)(int size, int *ascent, int *descent, int *line_gap);
+    int (*ttf_is_ready)(void);
 } kapi_t;
+
+// TTF glyph info (returned by ttf_get_glyph)
+typedef struct {
+    uint8_t *bitmap;     // Grayscale bitmap (0-255), do not free
+    int width;           // Bitmap width
+    int height;          // Bitmap height
+    int xoff;            // X offset from cursor
+    int yoff;            // Y offset from cursor (negative = above baseline)
+    int advance;         // Cursor advance after glyph
+} ttf_glyph_t;
+
+// TTF font style flags
+#define TTF_STYLE_NORMAL  0
+#define TTF_STYLE_BOLD    1
+#define TTF_STYLE_ITALIC  2
+
+// TTF font sizes
+#define TTF_SIZE_SMALL   12
+#define TTF_SIZE_NORMAL  16
+#define TTF_SIZE_LARGE   24
+#define TTF_SIZE_XLARGE  32
 
 // Window event types
 #define WIN_EVENT_NONE       0

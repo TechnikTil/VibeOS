@@ -16,6 +16,7 @@
 #include "fat32.h"
 #include "net.h"
 #include "tls.h"
+#include "ttf.h"
 
 // Global kernel API instance
 kapi_t kapi;
@@ -306,4 +307,11 @@ void kapi_init(void) {
     kapi.tls_recv = tls_recv;
     kapi.tls_close = tls_close;
     kapi.tls_is_connected = tls_is_connected;
+
+    // TrueType font rendering
+    kapi.ttf_get_glyph = (void *(*)(int, int, int))ttf_get_glyph;
+    kapi.ttf_get_advance = ttf_get_advance;
+    kapi.ttf_get_kerning = ttf_get_kerning;
+    kapi.ttf_get_metrics = ttf_get_metrics;
+    kapi.ttf_is_ready = ttf_is_ready;
 }

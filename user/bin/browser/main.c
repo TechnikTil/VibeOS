@@ -36,6 +36,17 @@ static int num_link_regions = 0;
 #define CHAR_H 16
 #define MARGIN 8
 
+// TTF font sizes for different elements
+#define FONT_SIZE_H1 28
+#define FONT_SIZE_H2 24
+#define FONT_SIZE_H3 20
+#define FONT_SIZE_H4 18
+#define FONT_SIZE_BODY 16
+#define FONT_SIZE_SMALL 14
+
+// Check if TTF is available
+static int use_ttf = 0;
+
 static int window_id = -1;
 static uint32_t *win_buf = NULL;
 static int win_w, win_h;
@@ -63,6 +74,33 @@ static int scrollbar_y = 0;
 static int scrollbar_h = 0;
 #define SCROLLBAR_W 12
 #define BACK_BTN_W 24
+
+// Get font size for a text block
+static int get_font_size(text_block_t *block) {
+    if (block->is_heading) {
+        switch (block->is_heading) {
+            case 1: return FONT_SIZE_H1;
+            case 2: return FONT_SIZE_H2;
+            case 3: return FONT_SIZE_H3;
+            case 4: return FONT_SIZE_H4;
+            default: return FONT_SIZE_BODY;
+        }
+    }
+    return FONT_SIZE_BODY;
+}
+
+// Get font style for a text block
+static int get_font_style(text_block_t *block) {
+    int style = TTF_STYLE_NORMAL;
+    if (block->is_bold || block->is_heading) style |= TTF_STYLE_BOLD;
+    if (block->is_italic) style |= TTF_STYLE_ITALIC;
+    return style;
+}
+
+// Get line height for font size
+static int get_line_height(int font_size) {
+    return font_size + 4;  // font size + some padding
+}
 
 static void draw_browser(void) {
     if (!win_buf) return;
@@ -101,17 +139,24 @@ static void draw_browser(void) {
     // Content area
     int y = CONTENT_Y + MARGIN - scroll_offset;
     int base_margin = MARGIN;
-    int max_chars = (win_w - MARGIN * 2 - SCROLLBAR_W) / CHAR_W;
+    int content_width = win_w - MARGIN * 2 - SCROLLBAR_W;
     int current_x = base_margin;  // Track horizontal position across inline blocks
+    int current_line_height = CHAR_H;
 
     text_block_t *block = get_blocks_head();
     while (block) {
         if (y > win_h) break;
 
+        // Get font parameters for this block
+        int font_size = use_ttf ? get_font_size(block) : CHAR_H;
+        int font_style = use_ttf ? get_font_style(block) : 0;
+        int line_height = use_ttf ? get_line_height(font_size) : CHAR_H;
+
         // Handle newline blocks
         if (block->is_newline) {
-            y += CHAR_H;
+            y += current_line_height;
             current_x = base_margin;
+            current_line_height = CHAR_H;
             block = block->next;
             continue;
         }
@@ -125,20 +170,23 @@ static void draw_browser(void) {
         const char *text = block->text;
         int len = str_len(text);
 
+        // Update line height if this block is taller
+        if (line_height > current_line_height) {
+            current_line_height = line_height;
+        }
+
         // Adjust margin for blockquotes and list items
         int left_margin = base_margin;
         if (block->is_blockquote) {
-            left_margin += CHAR_W * 2;  // Indent blockquotes
+            left_margin += 16;  // Indent blockquotes
         }
         if (block->is_list_item) {
-            // Ordered lists need more space for "10." etc
-            left_margin += CHAR_W * 3;  // Indent list items (bullet/number goes in the margin)
+            left_margin += 24;  // Indent list items
         }
 
-        // Adjust max chars for blockquote/list
-        int line_max = max_chars;
-        if (block->is_blockquote) line_max -= 2;
-        if (block->is_list_item) line_max -= 3;
+        // Calculate max width for this block
+        int max_width = content_width - (left_margin - base_margin);
+        int line_max = max_width / CHAR_W;  // For word wrap calculations
 
         // Track if we're on first line of block (for bullet rendering)
         int first_line = 1;
@@ -234,49 +282,66 @@ static void draw_browser(void) {
                     start_x = left_margin;
                 }
 
-                // Draw character by character for styling
+                // Draw text - use TTF if available
                 int actual_chars = 0;
+                int actual_width = 0;
                 int x = start_x;
-                for (int i = 0; i < line_len && text[pos + i] != '\n'; i++) {
-                    char c = text[pos + i];
-                    if (x + CHAR_W > win_w - SCROLLBAR_W - MARGIN) {
-                        // Wrap to next line
-                        y += CHAR_H;
-                        x = left_margin;
-                        current_x = left_margin;
-                    }
-                    gfx_draw_char(&gfx, x, y, c, fg, bg);
-                    x += CHAR_W;
+
+                // Build the line to draw
+                char line_buf[256];
+                int line_buf_len = 0;
+                for (int i = 0; i < line_len && text[pos + i] != '\n' && line_buf_len < 255; i++) {
+                    line_buf[line_buf_len++] = text[pos + i];
                     actual_chars++;
+                }
+                line_buf[line_buf_len] = '\0';
+
+                if (use_ttf && k->ttf_is_ready && k->ttf_is_ready()) {
+                    // TTF rendering
+                    actual_width = gfx_draw_ttf_string(&gfx, k, x, y, line_buf,
+                                                        font_size, font_style, fg, bg);
+                    x += actual_width;
+                } else {
+                    // Bitmap font fallback
+                    for (int i = 0; i < line_buf_len; i++) {
+                        if (x + CHAR_W > win_w - SCROLLBAR_W - MARGIN) {
+                            y += CHAR_H;
+                            x = left_margin;
+                        }
+                        gfx_draw_char(&gfx, x, y, line_buf[i], fg, bg);
+                        x += CHAR_W;
+                    }
+                    actual_width = line_buf_len * CHAR_W;
                 }
                 current_x = x;  // Save position for next inline block
 
                 // Underline for links
                 if (block->is_link) {
-                    gfx_fill_rect(&gfx, start_x, y + CHAR_H - 2,
-                                  actual_chars * CHAR_W, 1, fg);
+                    int ul_y = use_ttf ? y + line_height - 2 : y + CHAR_H - 2;
+                    gfx_fill_rect(&gfx, start_x, ul_y, actual_width, 1, fg);
                 }
 
                 // Register link region for hit testing
-                if (block->is_link && block->link_url && num_link_regions < MAX_LINK_REGIONS && actual_chars > 0) {
+                if (block->is_link && block->link_url && num_link_regions < MAX_LINK_REGIONS && actual_width > 0) {
                     link_region_t *lr = &link_regions[num_link_regions++];
                     lr->x = start_x;
                     lr->y = y;
-                    lr->w = actual_chars * CHAR_W;
-                    lr->h = CHAR_H;
+                    lr->w = actual_width;
+                    lr->h = use_ttf ? line_height : CHAR_H;
                     str_ncpy(lr->url, block->link_url, 511);
                 }
 
-                // Underline for h1 headings
-                if (block->is_heading == 1) {
+                // Underline for h1 headings (TTF already has bold, so skip underline)
+                if (block->is_heading == 1 && !use_ttf) {
                     gfx_fill_rect(&gfx, left_margin, y + CHAR_H - 2,
-                                  actual_chars * CHAR_W, 2, COLOR_BLACK);
+                                  actual_width, 2, COLOR_BLACK);
                 }
 
                 // Draw image box border
                 if (block->is_image) {
+                    int box_h = use_ttf ? line_height : CHAR_H;
                     gfx_draw_rect(&gfx, left_margin - 3, y - 1,
-                                  actual_chars * CHAR_W + 6, CHAR_H + 2, 0x00888888);
+                                  actual_width + 6, box_h + 2, 0x00888888);
                 }
             }
 
@@ -286,14 +351,14 @@ static void draw_browser(void) {
             // Skip newline in text and advance y
             if (pos < len && text[pos] == '\n') {
                 pos++;
-                y += CHAR_H;
+                y += use_ttf ? line_height : CHAR_H;
                 current_x = left_margin;
             }
         }
 
         // Extra space after paragraphs and special blocks
         if (block->is_paragraph || block->is_heading || block->is_blockquote || block->is_image) {
-            y += CHAR_H / 2;
+            y += use_ttf ? line_height / 2 : CHAR_H / 2;
             current_x = base_margin;
         }
 
@@ -435,6 +500,11 @@ int main(kapi_t *kapi, int argc, char **argv) {
 
     // Setup graphics context
     gfx_init(&gfx, win_buf, win_w, win_h, k->font_data);
+
+    // Check if TTF fonts are available
+    if (k->ttf_is_ready && k->ttf_is_ready()) {
+        use_ttf = 1;
+    }
 
     // Navigate to initial URL if provided
     if (argc > 1) {

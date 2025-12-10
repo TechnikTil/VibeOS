@@ -131,6 +131,7 @@ install-user: user $(DISK_IMG)
 	@if [ -f beep.mp3 ]; then cp beep.mp3 /tmp/vibeos_mount/beep.mp3 && echo "  Installed /beep.mp3"; fi
 	@if [ -f beep.wav ]; then cp beep.wav /tmp/vibeos_mount/beep.wav && echo "  Installed /beep.wav"; fi
 	@if [ -d Music ]; then mkdir -p /tmp/vibeos_mount/home/user/Music && cp -r Music/* /tmp/vibeos_mount/home/user/Music/ && echo "  Installed /home/user/Music/"; fi
+	@if [ -d fonts ]; then mkdir -p /tmp/vibeos_mount/fonts && cp -r fonts/* /tmp/vibeos_mount/fonts/ && echo "  Installed /fonts/"; fi
 	@dot_clean /tmp/vibeos_mount 2>/dev/null || true
 	@find /tmp/vibeos_mount -name '._*' -delete 2>/dev/null || true
 	@find /tmp/vibeos_mount -name '.DS_Store' -delete 2>/dev/null || true

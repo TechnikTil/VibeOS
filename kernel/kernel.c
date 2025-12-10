@@ -23,6 +23,7 @@
 #include "virtio_sound.h"
 #include "virtio_net.h"
 #include "net.h"
+#include "ttf.h"
 
 // QEMU virt machine PL011 UART base address
 #define UART0_BASE 0x09000000
@@ -193,6 +194,11 @@ void kernel_main(void) {
 
     // Initialize filesystem (will use FAT32 if disk available)
     vfs_init();
+
+    // Initialize TrueType font system (loads font from disk)
+    if (ttf_init() < 0) {
+        printf("[KERNEL] TTF init failed, using bitmap font only\n");
+    }
 
     // Initialize kernel API (for userspace programs)
     kapi_init();

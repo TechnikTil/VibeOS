@@ -153,7 +153,22 @@ typedef struct {
     void (*tls_close)(int sock);                                           // Close TLS connection
     int (*tls_is_connected)(int sock);                                     // Check if connected
 
+    // TrueType font rendering
+    // Returns pointer to glyph struct: { uint8_t *bitmap, int width, height, xoff, yoff, advance }
+    // style: 0=normal, 1=bold, 2=italic, 3=bold+italic
+    // Bitmap is grayscale (0-255), cached internally - do not free
+    void *(*ttf_get_glyph)(int codepoint, int size, int style);
+    int (*ttf_get_advance)(int codepoint, int size);                       // Get advance width
+    int (*ttf_get_kerning)(int cp1, int cp2, int size);                    // Get kerning between chars
+    void (*ttf_get_metrics)(int size, int *ascent, int *descent, int *line_gap);
+    int (*ttf_is_ready)(void);                                             // Check if TTF system is loaded
+
 } kapi_t;
+
+// TTF font style flags (for ttf_get_glyph)
+#define TTF_STYLE_NORMAL  0
+#define TTF_STYLE_BOLD    1
+#define TTF_STYLE_ITALIC  2
 
 // Window event types
 #define WIN_EVENT_NONE       0
