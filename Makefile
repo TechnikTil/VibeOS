@@ -25,7 +25,7 @@ KERNEL_S_SRCS = $(wildcard $(KERNEL_DIR)/*.S)
 
 # Userspace programs to build and install to disk
 # Note: browser is handled specially (multi-file build from user/bin/browser/)
-USER_PROGS = snake tetris desktop calc vibesh echo ls cat pwd mkdir touch rm term uptime sysmon textedit files date play music ping fetch
+USER_PROGS = snake tetris desktop calc vibesh echo ls cat pwd mkdir touch rm term uptime sysmon textedit files date play music ping fetch viewer
 USER_PROGS_MULTIFILE = browser
 
 # Object files
@@ -132,6 +132,9 @@ install-user: user $(DISK_IMG)
 	@if [ -f beep.wav ]; then cp beep.wav /tmp/vibeos_mount/beep.wav && echo "  Installed /beep.wav"; fi
 	@if [ -d Music ]; then mkdir -p /tmp/vibeos_mount/home/user/Music && cp -r Music/* /tmp/vibeos_mount/home/user/Music/ && echo "  Installed /home/user/Music/"; fi
 	@if [ -d fonts ]; then mkdir -p /tmp/vibeos_mount/fonts && cp -r fonts/* /tmp/vibeos_mount/fonts/ && echo "  Installed /fonts/"; fi
+	@if [ -f duck.png ]; then cp duck.png /tmp/vibeos_mount/duck.png && echo "  Installed /duck.png"; fi
+	@if [ -f duck.jpg ]; then cp duck.jpg /tmp/vibeos_mount/duck.jpg && echo "  Installed /duck.jpg"; fi
+	@if [ -f duck.bmp ]; then cp duck.bmp /tmp/vibeos_mount/duck.bmp && echo "  Installed /duck.bmp"; fi
 	@dot_clean /tmp/vibeos_mount 2>/dev/null || true
 	@find /tmp/vibeos_mount -name '._*' -delete 2>/dev/null || true
 	@find /tmp/vibeos_mount -name '.DS_Store' -delete 2>/dev/null || true
