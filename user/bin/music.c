@@ -72,6 +72,11 @@ static int track_scroll = 0;
 static char error_msg[64] = {0};
 static uint32_t error_tick = 0;
 
+// Single-file mode (launched with file argument)
+static int single_file_mode = 0;
+static char single_file_path[256] = {0};
+static char single_file_name[MAX_NAME_LEN] = {0};
+
 // Loading state machine
 typedef enum {
     LOAD_STATE_IDLE = 0,
@@ -309,45 +314,56 @@ static void draw_controls(void) {
     fill_rect(0, y, win_w, CONTROLS_H, WHITE);
     draw_hline(0, y, win_w, BLACK);
 
-    // Now playing info (left side)
-    if (playing_track >= 0 && playing_track < track_count) {
-        char display_name[MAX_NAME_LEN];
-        int j = 0;
-        for (; tracks[playing_track].name[j] && j < MAX_NAME_LEN - 1; j++) {
-            display_name[j] = tracks[playing_track].name[j];
-        }
-        display_name[j] = 0;
-        if (j > 4 && display_name[j-4] == '.' && display_name[j-3] == 'm') {
-            display_name[j-4] = 0;
-        }
+    // Now playing info (left side) - only in album mode
+    if (!single_file_mode) {
+        if (playing_track >= 0 && playing_track < track_count) {
+            char display_name[MAX_NAME_LEN];
+            int j = 0;
+            for (; tracks[playing_track].name[j] && j < MAX_NAME_LEN - 1; j++) {
+                display_name[j] = tracks[playing_track].name[j];
+            }
+            display_name[j] = 0;
+            if (j > 4 && display_name[j-4] == '.' && display_name[j-3] == 'm') {
+                display_name[j-4] = 0;
+            }
 
-        draw_text_clip(8, y + 8, display_name, BLACK, WHITE, 180);
-        draw_text_clip(8, y + 26, albums[selected_album].name, GRAY, WHITE, 180);
-    } else if (is_loading) {
-        const char *status = "Loading...";
-        if (load_state == LOAD_STATE_LOADING_FILE) status = "Reading file...";
-        else if (load_state == LOAD_STATE_DECODING) status = "Decoding...";
-        draw_string(8, y + 16, status, BLACK, WHITE);
-    } else {
-        draw_string(8, y + 16, "No track", GRAY, WHITE);
+            draw_text_clip(8, y + 8, display_name, BLACK, WHITE, 180);
+            draw_text_clip(8, y + 26, albums[selected_album].name, GRAY, WHITE, 180);
+        } else if (is_loading) {
+            const char *status = "Loading...";
+            if (load_state == LOAD_STATE_LOADING_FILE) status = "Reading file...";
+            else if (load_state == LOAD_STATE_DECODING) status = "Decoding...";
+            draw_string(8, y + 16, status, BLACK, WHITE);
+        } else {
+            draw_string(8, y + 16, "No track", GRAY, WHITE);
+        }
     }
 
     // Center controls
     int cx = win_w / 2;
     int btn_y = y + 8;
 
-    // |< Back
-    draw_button(cx - 90, btn_y, 30, 24, "|<", 0);
-
-    // Play/Pause
-    if (is_playing) {
-        draw_button(cx - 40, btn_y, 80, 24, "Pause", 0);
+    // In single file mode, only show Play/Pause (centered)
+    if (single_file_mode) {
+        if (is_playing) {
+            draw_button(cx - 40, btn_y, 80, 24, "Pause", 0);
+        } else {
+            draw_button(cx - 40, btn_y, 80, 24, "Play", 0);
+        }
     } else {
-        draw_button(cx - 40, btn_y, 80, 24, "Play", 0);
-    }
+        // |< Back
+        draw_button(cx - 90, btn_y, 30, 24, "|<", 0);
 
-    // >| Next
-    draw_button(cx + 60, btn_y, 30, 24, ">|", 0);
+        // Play/Pause
+        if (is_playing) {
+            draw_button(cx - 40, btn_y, 80, 24, "Pause", 0);
+        } else {
+            draw_button(cx - 40, btn_y, 80, 24, "Play", 0);
+        }
+
+        // >| Next
+        draw_button(cx + 60, btn_y, 30, 24, ">|", 0);
+    }
 
     // Progress bar
     int prog_y = y + 42;
@@ -426,9 +442,57 @@ static void draw_controls(void) {
     fill_rect(vol_x + 2, y + 30, vol_fill, 6, BLACK);
 }
 
+// Now Playing view for single-file mode
+static void draw_now_playing(void) {
+    // Full window background
+    fill_rect(0, 0, win_w, win_h - CONTROLS_H, WHITE);
+
+    // Center content vertically
+    int cy = (win_h - CONTROLS_H) / 2;
+
+    // Large "Now Playing" title
+    const char *title = "Now Playing";
+    int title_w = 11 * 8;  // strlen("Now Playing") * 8
+    draw_string((win_w - title_w) / 2, cy - 50, title, GRAY, WHITE);
+
+    // File name (centered, large-ish)
+    int name_len = 0;
+    while (single_file_name[name_len]) name_len++;
+    int name_w = name_len * 8;
+    if (name_w > win_w - 40) name_w = win_w - 40;  // Clamp
+
+    // Strip extension for display
+    char display_name[MAX_NAME_LEN];
+    int j = 0;
+    for (; single_file_name[j] && j < MAX_NAME_LEN - 1; j++) {
+        display_name[j] = single_file_name[j];
+    }
+    display_name[j] = 0;
+    // Remove .mp3 or .wav
+    if (j > 4 && display_name[j-4] == '.') {
+        display_name[j-4] = 0;
+        j -= 4;
+    }
+
+    name_w = j * 8;
+    draw_text_clip((win_w - name_w) / 2, cy - 10, display_name, BLACK, WHITE, win_w - 40);
+
+    // Show error if any
+    if (error_msg[0] && api->get_uptime_ticks() - error_tick < 300) {
+        int err_len = strlen(error_msg) * 8;
+        int err_x = (win_w - err_len) / 2;
+        fill_rect(err_x - 4, cy + 30, err_len + 8, 20, BLACK);
+        draw_string(err_x, cy + 32, error_msg, WHITE, BLACK);
+    }
+}
+
 static void draw_all(void) {
-    draw_sidebar();
-    draw_track_list();
+    if (single_file_mode) {
+        draw_now_playing();
+    } else {
+        draw_sidebar();
+        draw_track_list();
+    }
     draw_controls();
     api->window_invalidate(window_id);
 }
@@ -647,10 +711,253 @@ static int play_track(int track_idx) {
     return 0;
 }
 
+// Check file extension (case insensitive)
+static int ends_with(const char *str, const char *suffix) {
+    int str_len = 0, suf_len = 0;
+    while (str[str_len]) str_len++;
+    while (suffix[suf_len]) suf_len++;
+    if (suf_len > str_len) return 0;
+    for (int i = 0; i < suf_len; i++) {
+        char a = str[str_len - suf_len + i];
+        char b = suffix[i];
+        // Lowercase
+        if (a >= 'A' && a <= 'Z') a += 32;
+        if (b >= 'A' && b <= 'Z') b += 32;
+        if (a != b) return 0;
+    }
+    return 1;
+}
+
+// Play a file directly by path (MP3 or WAV)
+static int play_file(const char *path) {
+    // Stop current playback
+    if (is_playing) {
+        api->sound_stop();
+        is_playing = 0;
+    }
+
+    // Free old buffer
+    if (pcm_buffer) {
+        api->free(pcm_buffer);
+        pcm_buffer = NULL;
+    }
+
+    is_loading = 1;
+    load_state = LOAD_STATE_LOADING_FILE;
+    draw_all();
+    api->yield();
+
+    // Load file
+    void *file = api->open(path);
+    if (!file) {
+        is_loading = 0;
+        load_state = LOAD_STATE_IDLE;
+        show_error("Cannot open file");
+        return -1;
+    }
+
+    int size = api->file_size(file);
+    if (size <= 0) {
+        is_loading = 0;
+        load_state = LOAD_STATE_IDLE;
+        show_error("Empty file");
+        return -1;
+    }
+
+    uint8_t *file_data = api->malloc(size);
+    if (!file_data) {
+        is_loading = 0;
+        load_state = LOAD_STATE_IDLE;
+        show_error("Out of memory");
+        return -1;
+    }
+
+    int offset = 0;
+    while (offset < size) {
+        int n = api->read(file, (char *)file_data + offset, size - offset, offset);
+        if (n <= 0) break;
+        offset += n;
+    }
+
+    // Check file type and decode
+    if (ends_with(path, ".wav")) {
+        // WAV file - parse header and extract PCM
+        load_state = LOAD_STATE_DECODING;
+        draw_all();
+        api->yield();
+
+        // Basic WAV header parsing
+        if (size < 44) {
+            api->free(file_data);
+            is_loading = 0;
+            load_state = LOAD_STATE_IDLE;
+            show_error("Invalid WAV file");
+            return -1;
+        }
+
+        // Check RIFF header
+        if (file_data[0] != 'R' || file_data[1] != 'I' ||
+            file_data[2] != 'F' || file_data[3] != 'F') {
+            api->free(file_data);
+            is_loading = 0;
+            load_state = LOAD_STATE_IDLE;
+            show_error("Not a WAV file");
+            return -1;
+        }
+
+        // Find fmt chunk
+        int channels = file_data[22] | (file_data[23] << 8);
+        int sample_rate = file_data[24] | (file_data[25] << 8) |
+                         (file_data[26] << 16) | (file_data[27] << 24);
+        int bits_per_sample = file_data[34] | (file_data[35] << 8);
+
+        if (bits_per_sample != 16) {
+            api->free(file_data);
+            is_loading = 0;
+            load_state = LOAD_STATE_IDLE;
+            show_error("Only 16-bit WAV supported");
+            return -1;
+        }
+
+        // Find data chunk (starts at offset 44 for standard WAV)
+        int data_offset = 44;
+        int data_size = size - 44;
+
+        // Search for "data" marker if needed
+        for (int i = 36; i < size - 8; i++) {
+            if (file_data[i] == 'd' && file_data[i+1] == 'a' &&
+                file_data[i+2] == 't' && file_data[i+3] == 'a') {
+                data_size = file_data[i+4] | (file_data[i+5] << 8) |
+                           (file_data[i+6] << 16) | (file_data[i+7] << 24);
+                data_offset = i + 8;
+                break;
+            }
+        }
+
+        int num_samples = data_size / (channels * 2);  // 16-bit = 2 bytes
+
+        // Convert to stereo if mono
+        if (channels == 1) {
+            pcm_buffer = api->malloc(num_samples * 4);  // 2 channels * 2 bytes
+            if (!pcm_buffer) {
+                api->free(file_data);
+                is_loading = 0;
+                load_state = LOAD_STATE_IDLE;
+                show_error("Out of memory");
+                return -1;
+            }
+            int16_t *src = (int16_t *)(file_data + data_offset);
+            int16_t *dst = pcm_buffer;
+            for (int i = 0; i < num_samples; i++) {
+                dst[i * 2] = src[i];
+                dst[i * 2 + 1] = src[i];
+            }
+        } else {
+            // Already stereo, just copy
+            pcm_buffer = api->malloc(data_size);
+            if (!pcm_buffer) {
+                api->free(file_data);
+                is_loading = 0;
+                load_state = LOAD_STATE_IDLE;
+                show_error("Out of memory");
+                return -1;
+            }
+            // Manual copy
+            int16_t *src = (int16_t *)(file_data + data_offset);
+            int16_t *dst = pcm_buffer;
+            for (int i = 0; i < num_samples * 2; i++) {
+                dst[i] = src[i];
+            }
+        }
+
+        api->free(file_data);
+        pcm_samples = num_samples;
+        pcm_sample_rate = sample_rate;
+
+    } else {
+        // Assume MP3
+        load_state = LOAD_STATE_DECODING;
+        draw_all();
+        api->yield();
+
+        uint32_t max_pcm_bytes = (uint32_t)size * 15;
+        pcm_buffer = api->malloc(max_pcm_bytes);
+        if (!pcm_buffer) {
+            api->free(file_data);
+            is_loading = 0;
+            load_state = LOAD_STATE_IDLE;
+            show_error("Out of memory");
+            return -1;
+        }
+
+        mp3dec_t mp3d;
+        mp3dec_init(&mp3d);
+        mp3dec_frame_info_t info;
+        int16_t temp_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME];
+
+        const uint8_t *ptr = file_data;
+        int remaining = size;
+        int16_t *out_ptr = pcm_buffer;
+        uint32_t decoded_samples = 0;
+        int channels = 0;
+
+        while (remaining > 0) {
+            int samples = mp3dec_decode_frame(&mp3d, ptr, remaining, temp_pcm, &info);
+            if (info.frame_bytes == 0) break;
+            if (samples > 0) {
+                if (channels == 0) {
+                    channels = info.channels;
+                    pcm_sample_rate = info.hz;
+                }
+                decoded_samples += samples;
+                if (channels == 1) {
+                    for (int i = 0; i < samples; i++) {
+                        *out_ptr++ = temp_pcm[i];
+                        *out_ptr++ = temp_pcm[i];
+                    }
+                } else {
+                    for (int i = 0; i < samples * 2; i++) {
+                        *out_ptr++ = temp_pcm[i];
+                    }
+                }
+            }
+            ptr += info.frame_bytes;
+            remaining -= info.frame_bytes;
+        }
+
+        api->free(file_data);
+
+        if (decoded_samples == 0 || channels == 0) {
+            api->free(pcm_buffer);
+            pcm_buffer = NULL;
+            is_loading = 0;
+            load_state = LOAD_STATE_IDLE;
+            show_error("Invalid audio format");
+            return -1;
+        }
+
+        pcm_samples = decoded_samples;
+    }
+
+    // Start playback
+    playing_track = 0;  // Use 0 to indicate "something is playing"
+    is_playing = 1;
+    is_loading = 0;
+    load_state = LOAD_STATE_IDLE;
+    playback_start_tick = api->get_uptime_ticks ? api->get_uptime_ticks() : 0;
+    pause_elapsed_ms = 0;
+
+    api->sound_play_pcm_async(pcm_buffer, pcm_samples, 2, pcm_sample_rate);
+
+    return 0;
+}
+
 static void toggle_play_pause(void) {
     if (playing_track < 0) {
         // Nothing loaded - play selected or first track
-        if (selected_track >= 0) {
+        if (single_file_mode) {
+            play_file(single_file_path);
+        } else if (selected_track >= 0) {
             play_track(selected_track);
         } else if (track_count > 0) {
             play_track(0);
@@ -707,8 +1014,8 @@ static void handle_click(int mx, int my) {
         int cx = win_w / 2;
         int btn_y = ctrl_y + 8;
 
-        // Back button
-        if (mx >= cx - 90 && mx < cx - 60 && my >= btn_y && my < btn_y + 24) {
+        // Back button (not in single file mode)
+        if (!single_file_mode && mx >= cx - 90 && mx < cx - 60 && my >= btn_y && my < btn_y + 24) {
             prev_track();
             return;
         }
@@ -719,23 +1026,28 @@ static void handle_click(int mx, int my) {
             return;
         }
 
-        // Next button
-        if (mx >= cx + 60 && mx < cx + 90 && my >= btn_y && my < btn_y + 24) {
+        // Next button (not in single file mode)
+        if (!single_file_mode && mx >= cx + 60 && mx < cx + 90 && my >= btn_y && my < btn_y + 24) {
             next_track();
             return;
         }
 
-        // Volume bar
-        int vol_x = win_w - 80;
-        if (mx >= vol_x && mx < vol_x + 70 && my >= ctrl_y + 28 && my < ctrl_y + 38) {
-            volume = ((mx - vol_x) * 100) / 70;
-            if (volume < 0) volume = 0;
-            if (volume > 100) volume = 100;
-            return;
+        // Volume bar (not shown in single file mode compact view)
+        if (!single_file_mode) {
+            int vol_x = win_w - 80;
+            if (mx >= vol_x && mx < vol_x + 70 && my >= ctrl_y + 28 && my < ctrl_y + 38) {
+                volume = ((mx - vol_x) * 100) / 70;
+                if (volume < 0) volume = 0;
+                if (volume > 100) volume = 100;
+                return;
+            }
         }
 
         return;
     }
+
+    // Skip album/track clicks in single file mode
+    if (single_file_mode) return;
 
     // Click in sidebar (albums)
     if (mx < SIDEBAR_W) {
@@ -769,6 +1081,7 @@ static void handle_click(int mx, int my) {
 }
 
 static void handle_double_click(int mx, int my) {
+    if (single_file_mode) return;
     if (mx >= SIDEBAR_W && selected_album >= 0) {
         int list_y = 28;
         int visible_tracks = (win_h - CONTROLS_H - 32) / TRACK_ITEM_H;
@@ -785,14 +1098,53 @@ static void handle_double_click(int mx, int my) {
 
 // ============ Main ============
 
+// Extract filename from path
+static void extract_filename(const char *path, char *name, int max_len) {
+    // Find last '/'
+    const char *last_slash = path;
+    const char *p = path;
+    while (*p) {
+        if (*p == '/') last_slash = p + 1;
+        p++;
+    }
+    // Copy filename
+    int i = 0;
+    while (last_slash[i] && i < max_len - 1) {
+        name[i] = last_slash[i];
+        i++;
+    }
+    name[i] = 0;
+}
+
 int main(kapi_t *k, int argc, char **argv) {
-    (void)argc; (void)argv;
     api = k;
 
-    // Create window
-    win_w = 500;
-    win_h = 400;
-    window_id = api->window_create(150, 80, win_w, win_h, "Music");
+    // Check for file argument
+    if (argc > 1 && argv[1]) {
+        single_file_mode = 1;
+        // Copy path
+        int i = 0;
+        while (argv[1][i] && i < 255) {
+            single_file_path[i] = argv[1][i];
+            i++;
+        }
+        single_file_path[i] = 0;
+        // Extract filename for display
+        extract_filename(single_file_path, single_file_name, MAX_NAME_LEN);
+    }
+
+    // Create window - smaller for single file mode
+    if (single_file_mode) {
+        win_w = 350;
+        win_h = 200;
+    } else {
+        win_w = 500;
+        win_h = 400;
+    }
+
+    // Window title: "Music" or filename
+    const char *title = single_file_mode ? single_file_name : "Music";
+    window_id = api->window_create(150, 80, win_w, win_h, title);
     if (window_id < 0) {
         return 1;
     }
@@ -806,7 +1158,14 @@ int main(kapi_t *k, int argc, char **argv) {
 
     gfx_init(&gfx, win_buffer, bw, bh, api->font_data);
 
-    scan_albums();
+    if (single_file_mode) {
+        // Start playing immediately
+        draw_all();
+        api->yield();
+        play_file(single_file_path);
+    } else {
+        scan_albums();
+    }
     draw_all();
 
     int running = 1;
@@ -844,15 +1203,15 @@ int main(kapi_t *k, int argc, char **argv) {
                     int key = data1;
                     if (key == ' ') {
                         toggle_play_pause();
-                    } else if (key == 'n' || key == 'N' || key == 0x103) {
+                    } else if (!single_file_mode && (key == 'n' || key == 'N' || key == 0x103)) {
                         next_track();
-                    } else if (key == 'p' || key == 'P' || key == 0x102) {
+                    } else if (!single_file_mode && (key == 'p' || key == 'P' || key == 0x102)) {
                         prev_track();
-                    } else if (key == 0x101) {
+                    } else if (!single_file_mode && key == 0x101) {
                         if (selected_track < track_count - 1) selected_track++;
-                    } else if (key == 0x100) {
+                    } else if (!single_file_mode && key == 0x100) {
                         if (selected_track > 0) selected_track--;
-                    } else if (key == '\n' || key == '\r') {
+                    } else if (!single_file_mode && (key == '\n' || key == '\r')) {
                         if (selected_track >= 0) play_track(selected_track);
                     } else if (key == 'q' || key == 'Q') {
                         running = 0;
@@ -874,7 +1233,13 @@ int main(kapi_t *k, int argc, char **argv) {
 
         // Check if playback finished
         if (is_playing && api->sound_is_playing && !api->sound_is_playing()) {
-            next_track();
+            if (single_file_mode) {
+                // In single file mode, just stop (don't advance)
+                is_playing = 0;
+                playing_track = -1;
+            } else {
+                next_track();
+            }
         }
 
         draw_all();

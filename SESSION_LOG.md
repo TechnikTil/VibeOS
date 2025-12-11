@@ -823,3 +823,24 @@
 - **Reduced whitespace** (was adding double newlines everywhere)
 - **Links clickable again** (href properly stored in DOM and passed to renderer)
 - **Achievement**: CSS engine complete! Wikipedia is usable!
+
+### Session 38
+- **Image Viewer (`/bin/viewer`) - View images from the file manager!**
+  - Added in previous commit (e739b6b)
+  - Supports PNG, JPG, BMP via stb_image
+  - Center image in window, scale if too large
+  - Arrow keys or click to navigate prev/next in same directory
+- **Music Player - Single file mode!**
+  - Can now open individual audio files: `music /path/to/song.mp3`
+  - Supports both MP3 and WAV formats
+  - When opened with file argument:
+    - Enters compact "Now Playing" mode (350x200 window)
+    - Shows filename centered with playback controls
+    - Just Play/Pause button (no prev/next)
+    - Auto-plays immediately on launch
+  - When opened without arguments: Album browser mode (existing behavior)
+  - New `play_file()` function handles both MP3 and WAV decoding
+  - WAV support: Parses RIFF header, extracts PCM, handles mono→stereo conversion
+  - `ends_with()` helper for case-insensitive extension checking
+  - Prep work for file manager associations (double-click .mp3/.wav opens Music player)
+- **Achievement**: Music player ready for file associations!
