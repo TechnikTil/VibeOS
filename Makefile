@@ -120,8 +120,9 @@ all: $(KERNEL_BIN)
 	@echo "Output: $(KERNEL_BIN)"
 
 # Shortcut for Pi build
+# Use PRINTF=screen (default) for framebuffer output, PRINTF=uart for serial
 pi:
-	$(MAKE) TARGET=pi
+	$(MAKE) TARGET=pi PRINTF=$(PRINTF)
 
 # Install to Pi SD card
 # Usage: make install-pi DISK=disk5s2

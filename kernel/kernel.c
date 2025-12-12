@@ -131,8 +131,8 @@ void kernel_main(void) {
     // Pi: Initialize BCM2836 ARM Local + BCM2835 interrupt controllers
     hal_irq_init();
 
-    // Initialize timer (100ms tick for visible LED blink during testing)
-    hal_timer_init(100);
+    // Initialize timer (10ms tick for responsive keyboard polling)
+    hal_timer_init(10);
 #endif
 
 #ifdef TARGET_QEMU

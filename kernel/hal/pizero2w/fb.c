@@ -125,6 +125,13 @@ static void *bus_to_arm(uint32_t bus) {
 int hal_fb_init(uint32_t width, uint32_t height) {
     debug_puts("[HAL/FB] Pi framebuffer init\n");
 
+    // Override resolution for Pi - 1080p is too slow without D-cache
+    // 800x600 = 480KB vs 1920x1080 = 8MB per frame (17x less data!)
+    (void)width;
+    (void)height;
+    width = 800;
+    height = 600;
+
     // Build property message
     // Must be 16-byte aligned, and we pass the bus address
     uint32_t idx = 0;

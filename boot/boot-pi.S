@@ -47,11 +47,16 @@ drop_from_el3:
     msr     scr_el3, x0
     isb
 
-    // Initialize SCTLR_EL1 to safe defaults
+    // Invalidate I-cache before enabling (contains stale GPU bootloader code)
+    ic      iallu
+    dsb     ish
+    isb
+
+    // Initialize SCTLR_EL1 - enable I-cache for faster code execution
     mrs     x0, sctlr_el1
     bic     x0, x0, #(1 << 0)   // Clear M bit (MMU off)
-    bic     x0, x0, #(1 << 2)   // Clear C bit (data cache off)
-    bic     x0, x0, #(1 << 12)  // Clear I bit (instruction cache off)
+    bic     x0, x0, #(1 << 2)   // Clear C bit (data cache off - needs MMU for safety)
+    orr     x0, x0, #(1 << 12)  // Set I bit (instruction cache ON)
     msr     sctlr_el1, x0
     isb
 
@@ -73,11 +78,16 @@ drop_from_el2:
     mov     x0, #(1 << 31)      // RW=1: EL1 is AArch64
     msr     hcr_el2, x0
 
-    // Initialize SCTLR_EL1 to safe defaults
+    // Invalidate I-cache before enabling (contains stale GPU bootloader code)
+    ic      iallu
+    dsb     ish
+    isb
+
+    // Initialize SCTLR_EL1 - enable I-cache for faster code execution
     mrs     x0, sctlr_el1
     bic     x0, x0, #(1 << 0)   // Clear M bit (MMU off)
-    bic     x0, x0, #(1 << 2)   // Clear C bit (data cache off)
-    bic     x0, x0, #(1 << 12)  // Clear I bit (instruction cache off)
+    bic     x0, x0, #(1 << 2)   // Clear C bit (data cache off - needs MMU for safety)
+    orr     x0, x0, #(1 << 12)  // Set I bit (instruction cache ON)
     msr     sctlr_el1, x0
     isb
 

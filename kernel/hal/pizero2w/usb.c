@@ -1778,10 +1778,6 @@ static void usb_irq_handler(void) {
                             memcpy((void*)kbd_report_buf, intr_dma_buffer, 8);
                             kbd_report_ready = 1;
                             usb_kbd_data_count++;
-                            printf("[USB-IRQ] KBD DATA! %d bytes: %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                                   received,
-                                   intr_dma_buffer[0], intr_dma_buffer[1], intr_dma_buffer[2], intr_dma_buffer[3],
-                                   intr_dma_buffer[4], intr_dma_buffer[5], intr_dma_buffer[6], intr_dma_buffer[7]);
                         }
                     }
                     else if ((hcint & HCINT_CHHLTD) && (hcint & HCINT_ACK)) {
@@ -1797,10 +1793,6 @@ static void usb_irq_handler(void) {
                             memcpy((void*)kbd_report_buf, intr_dma_buffer, 8);
                             kbd_report_ready = 1;
                             usb_kbd_data_count++;
-                            printf("[USB-IRQ] KBD DATA! %d bytes: %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                                   received,
-                                   intr_dma_buffer[0], intr_dma_buffer[1], intr_dma_buffer[2], intr_dma_buffer[3],
-                                   intr_dma_buffer[4], intr_dma_buffer[5], intr_dma_buffer[6], intr_dma_buffer[7]);
                         }
                     }
                     else if (hcint & HCINT_NAK) {
