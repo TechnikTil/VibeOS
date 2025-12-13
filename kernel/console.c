@@ -128,6 +128,11 @@ void console_putc(char c) {
             }
             break;
     }
+
+    // Show cursor at new position (static cursor, always visible)
+    if (cursor_enabled && !cursor_visible) {
+        draw_cursor(1);
+    }
 }
 
 void console_puts(const char *s) {
@@ -154,6 +159,10 @@ void console_set_cursor(int row, int col) {
     }
     if (row >= 0 && row < num_rows) cursor_row = row;
     if (col >= 0 && col < num_cols) cursor_col = col;
+    // Show cursor at new position
+    if (cursor_enabled && !cursor_visible) {
+        draw_cursor(1);
+    }
 }
 
 void console_get_cursor(int *row, int *col) {

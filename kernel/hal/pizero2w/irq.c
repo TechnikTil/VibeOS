@@ -12,7 +12,6 @@
 #include "../hal.h"
 #include "../../printf.h"
 #include "../../string.h"
-#include "../../console.h"
 
 void led_init(void);
 void led_toggle(void);
@@ -253,10 +252,8 @@ static void on_timer_tick(void) {
     // This is much more efficient than SOF-based polling (1000 IRQs/sec)
     hal_usb_keyboard_tick();
 
-    // Blink console cursor (every 50 ticks = 500ms at 100Hz)
-    if ((tick_count % 50) == 0) {
-        console_blink_cursor();
-    }
+    // NOTE: Cursor blink disabled on Pi - was interfering with USB keyboard
+    // TODO: Investigate why console_blink_cursor() breaks USB on real hardware
 
     // Debug: check USB interrupt status every second
     if (tick_count % 100 == 0) {
