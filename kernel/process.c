@@ -1,9 +1,9 @@
 /*
  * VibeOS Process Management
  *
- * Cooperative multitasking - Win3.1/Classic Mac style.
+ * Preemptive multitasking - timer IRQ forces context switches.
  * Programs run in kernel space and call kernel functions directly.
- * No memory protection, no preemption.
+ * No memory protection, but full preemption via timer interrupt.
  */
 
 #include "process.h"
@@ -20,9 +20,14 @@ static process_t proc_table[MAX_PROCESSES];
 static int current_pid = -1;  // -1 means kernel/shell is running
 static int next_pid = 1;
 
+// Current process pointer - used by IRQ handler for preemption
+// NULL means kernel is running (no process to save to)
+process_t *current_process = NULL;
+
 // Kernel context - saved when switching from kernel to a process
 // This allows us to return to kernel (e.g., desktop running via process_exec)
-static cpu_context_t kernel_context;
+// Global (not static) so vectors.S can access it for kernel->process IRQ switches
+cpu_context_t kernel_context;
 
 // Program load address - grows upward as we load programs
 // Set dynamically based on heap_end
@@ -43,8 +48,11 @@ void process_init(void) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
         proc_table[i].state = PROC_STATE_FREE;
         proc_table[i].pid = 0;
+        // Also clear context to prevent garbage
+        memset(&proc_table[i].context, 0, sizeof(cpu_context_t));
     }
     current_pid = -1;
+    current_process = NULL;
     next_pid = 1;
 
     // Programs load right after the heap
@@ -77,6 +85,11 @@ process_t *process_get(int pid) {
         }
     }
     return NULL;
+}
+
+// Get pointer to current_process pointer (for assembly IRQ handler)
+process_t **process_get_current_ptr(void) {
+    return &current_process;
 }
 
 int process_count_ready(void) {
@@ -202,15 +215,16 @@ int process_create(const char *path, int argc, char **argv) {
     // Stack grows down, SP starts at top (aligned to 16 bytes)
     uint64_t stack_top = ((uint64_t)proc->stack_base + proc->stack_size) & ~0xFULL;
 
-    // Set up initial context so when we switch to this process,
-    // it "returns" to process_entry_wrapper which calls main
+    // Set up initial context for preemptive scheduling
+    // pc = entry wrapper, parameters in callee-saved registers x19-x22
     memset(&proc->context, 0, sizeof(cpu_context_t));
     proc->context.sp = stack_top;
-    proc->context.x30 = (uint64_t)process_entry_wrapper;  // Return to wrapper
-    proc->context.x19 = proc->entry;    // Pass entry point in callee-saved reg
-    proc->context.x20 = (uint64_t)&kapi; // Pass kapi pointer
-    proc->context.x21 = (uint64_t)argc;  // argc
-    proc->context.x22 = (uint64_t)argv;  // argv
+    proc->context.pc = (uint64_t)process_entry_wrapper;  // Start here
+    proc->context.pstate = 0x3c5;  // EL1h, DAIF masked (IRQs disabled initially)
+    proc->context.x[19] = proc->entry;        // x19 = entry point
+    proc->context.x[20] = (uint64_t)&kapi;    // x20 = kapi pointer
+    proc->context.x[21] = (uint64_t)argc;     // x21 = argc
+    proc->context.x[22] = (uint64_t)argv;     // x22 = argv
 
     printf("[PROC] Created process '%s' pid=%d at 0x%lx (slot %d)\n",
            proc->name, proc->pid, proc->load_base, slot);
@@ -219,19 +233,29 @@ int process_create(const char *path, int argc, char **argv) {
 }
 
 // Entry wrapper - called when a new process is switched to for the first time
-// x19 = entry, x20 = kapi, x21 = argc, x22 = argv (set in context)
-static void process_entry_wrapper(void) {
-    // Get parameters from callee-saved registers (set during create)
-    register uint64_t entry asm("x19");
-    register uint64_t kapi_ptr asm("x20");
-    register uint64_t argc asm("x21");
-    register uint64_t argv asm("x22");
+// Parameters passed in callee-saved registers x19-x22 (preserved across context switch)
+// x19 = entry, x20 = kapi, x21 = argc, x22 = argv
+//
+// MUST be naked to prevent GCC prologue from clobbering x19-x22!
+static void __attribute__((naked)) process_entry_wrapper(void) {
+    asm volatile(
+        // Enable interrupts now that we're in user code
+        "msr daifclr, #2\n"
 
-    program_entry_t prog_main = (program_entry_t)entry;
-    int result = prog_main((kapi_t *)kapi_ptr, (int)argc, (char **)argv);
+        // Set up call: main(kapi, argc, argv)
+        // x19=entry, x20=kapi, x21=argc, x22=argv
+        "mov x0, x20\n"         // x0 = kapi
+        "mov x1, x21\n"         // x1 = argc
+        "mov x2, x22\n"         // x2 = argv
+        "blr x19\n"             // Call entry(kapi, argc, argv)
 
-    // Process returned - exit
-    process_exit(result);
+        // Program returned, x0 = exit status
+        "bl process_exit\n"
+
+        // Should never return
+        "1: b 1b\n"
+        ::: "memory"
+    );
 }
 
 // Start a process (make it runnable)
@@ -250,8 +274,12 @@ int process_start(int pid) {
 
 // Exit current process
 void process_exit(int status) {
+    // Disable IRQs during exit to prevent race with preemption
+    asm volatile("msr daifset, #2" ::: "memory");
+
     if (current_pid < 0) {
         printf("[PROC] Exit called with no current process!\n");
+        asm volatile("msr daifclr, #2" ::: "memory");
         return;
     }
 
@@ -272,10 +300,12 @@ void process_exit(int status) {
     // We're done with this process - switch back to kernel context
     // This MUST not return - we context switch away
     current_pid = -1;
+    current_process = NULL;
 
     // Switch directly back to kernel context
     // This will resume in process_exec_args() or process_schedule()
     // wherever the kernel was waiting
+    // IRQs will be re-enabled when kernel re-enables them
     context_switch(&proc->context, &kernel_context);
 
     // Should never reach here
@@ -295,8 +325,11 @@ void process_yield(void) {
     process_schedule();
 }
 
-// Simple round-robin scheduler
+// Simple round-robin scheduler (for voluntary transitions like process_exec)
 void process_schedule(void) {
+    // Disable IRQs during scheduling to prevent race with preemption
+    asm volatile("msr daifset, #2" ::: "memory");
+
     int old_pid = current_pid;
     process_t *old_proc = (old_pid >= 0) ? &proc_table[old_pid] : NULL;
 
@@ -316,31 +349,33 @@ void process_schedule(void) {
         // No runnable processes
         if (old_pid >= 0 && old_proc->state == PROC_STATE_RUNNING) {
             // Current process still running, keep it
+            asm volatile("msr daifclr, #2" ::: "memory");  // Re-enable IRQs
             return;
         }
         // Return to kernel (if we were in a process, switch back to kernel)
         if (old_pid >= 0) {
             current_pid = -1;
+            current_process = NULL;
             context_switch(&old_proc->context, &kernel_context);
+            // When we return here, IRQs will be re-enabled below
         }
         // Already in kernel with nothing to run - sleep until next interrupt
-        // This prevents busy-waiting when all processes are waiting for I/O
+        asm volatile("msr daifclr, #2" ::: "memory");  // Re-enable IRQs
         asm volatile("wfi");
         return;
     }
 
     if (next == old_pid && old_proc && old_proc->state == PROC_STATE_RUNNING) {
         // Same process and it's running - nothing to switch
-        // But if it just yielded (state == READY), it's waiting for something
-        // so we should sleep before giving it back the CPU
+        asm volatile("msr daifclr, #2" ::: "memory");  // Re-enable IRQs
         return;
     }
 
     if (next == old_pid && old_proc && old_proc->state == PROC_STATE_READY) {
         // Process yielded but it's the only one - sleep until interrupt
-        // then let it run again. This prevents busy-wait loops.
-        asm volatile("wfi");
         old_proc->state = PROC_STATE_RUNNING;
+        asm volatile("msr daifclr, #2" ::: "memory");  // Re-enable IRQs
+        asm volatile("wfi");
         return;
     }
 
@@ -353,11 +388,16 @@ void process_schedule(void) {
 
     new_proc->state = PROC_STATE_RUNNING;
     current_pid = next;
+    current_process = new_proc;
 
     // Context switch!
     // If old_pid == -1, we're switching FROM kernel context
+    // IRQs stay disabled - new process will enable them (entry_wrapper or return path)
     cpu_context_t *old_ctx = (old_pid >= 0) ? &old_proc->context : &kernel_context;
     context_switch(old_ctx, &new_proc->context);
+
+    // We return here when someone switches back to us
+    asm volatile("msr daifclr, #2" ::: "memory");  // Re-enable IRQs
 }
 
 // Execute and wait - creates a real process and waits for it to finish
@@ -403,16 +443,51 @@ int process_exec(const char *path) {
 }
 
 // Called from IRQ handler for preemptive scheduling
-// This runs after all registers are saved on the IRQ stack
+// Just updates current_process - IRQ handler does the actual context switch
 void process_schedule_from_irq(void) {
-    // Only reschedule if we have multiple processes
+    // Check how many processes are ready to run
     int ready_count = process_count_ready();
-    if (ready_count <= 1) {
-        return;  // No point switching
+
+    // If kernel is running (current_pid == -1), we should switch to ANY ready process
+    // If a process is running, we only switch if there's another ready process
+    if (current_pid >= 0 && ready_count <= 1) {
+        return;  // Only one process, no point switching
+    }
+    if (current_pid < 0 && ready_count == 0) {
+        return;  // Kernel running, no processes to switch to
     }
 
-    // Call the normal scheduler
-    process_schedule();
+    // Find next runnable process (round-robin)
+    int old_slot = current_pid;
+    int start = (old_slot >= 0) ? old_slot + 1 : 0;
+
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        int idx = (start + i) % MAX_PROCESSES;
+        if (proc_table[idx].state == PROC_STATE_READY) {
+            // Found a different process to switch to
+            if (idx != old_slot) {
+                // Safety check: verify process has valid context
+                process_t *new_proc = &proc_table[idx];
+                if (new_proc->context.sp == 0 || new_proc->context.pc == 0) {
+                    continue;  // Skip invalid process
+                }
+
+                // Mark old process as ready (it was running)
+                if (old_slot >= 0 && proc_table[old_slot].state == PROC_STATE_RUNNING) {
+                    proc_table[old_slot].state = PROC_STATE_READY;
+                }
+
+                // Switch to new process
+                proc_table[idx].state = PROC_STATE_RUNNING;
+                current_pid = idx;
+                current_process = new_proc;
+
+                // Memory barrier to ensure current_process is visible to IRQ handler
+                asm volatile("dsb sy" ::: "memory");
+            }
+            return;
+        }
+    }
 }
 
 // Kill a process by PID

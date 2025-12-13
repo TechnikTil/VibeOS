@@ -12,6 +12,7 @@
 #include "../hal.h"
 #include "../../printf.h"
 #include "../../string.h"
+#include "../../process.h"
 
 void led_init(void);
 void led_toggle(void);
@@ -251,6 +252,11 @@ static void on_timer_tick(void) {
     // Poll USB keyboard every tick (10ms)
     // This is much more efficient than SOF-based polling (1000 IRQs/sec)
     hal_usb_keyboard_tick();
+
+    // Preemptive scheduling - switch every 5 ticks (50ms timeslice)
+    if ((tick_count % 5) == 0) {
+        process_schedule_from_irq();
+    }
 
     // NOTE: Cursor blink disabled on Pi - was interfering with USB keyboard
     // TODO: Investigate why console_blink_cursor() breaks USB on real hardware

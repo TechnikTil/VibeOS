@@ -1259,3 +1259,42 @@ Session 44: USB Keyboard Working on Real Pi Hardware!
   - **Files created:** 27 new files in user/bin/
   - **Files modified:** Makefile, kernel/process.c, kernel/process.h, kernel/kapi.c, kernel/kapi.h, user/lib/vibe.h, kernel/hal/hal.h, kernel/hal/qemu/platform.c, kernel/hal/pizero2w/platform.c
   - **Achievement**: VibeOS now has a proper Unix-like coreutils suite!
+
+### Session 47
+- **Preemptive Multitasking Implementation**
+- **Goal:** Switch from cooperative (apps must call yield()) to preemptive (timer forces context switches)
+- **Initial approach (WRONG):** Make yield() a no-op, rely entirely on timer preemption
+- **Problem discovered:** With 10 apps running, system crawled to a halt
+  - Each process got 50ms timeslice
+  - Full round-robin = 10 × 50ms = 500ms per cycle
+  - Apps spinning in event loops burned their full slice doing nothing
+  - With cooperative, apps yielded immediately when waiting for input
+- **Key insight:** Real OSes (Linux) use BOTH mechanisms:
+  1. Voluntary yield - apps yield when waiting (fast path, primary)
+  2. Preemptive backup - timer forces switch for CPU hogs (safety net)
+- **Implementation details:**
+  - Expanded `cpu_context_t` to save ALL registers (x0-x30, sp, pc, pstate, FPU)
+  - Modified `vectors.S` IRQ handler to save/restore full context
+  - Added `CONTEXT_OFFSET` (0x50) - cpu_context_t offset within process_t
+  - Changed `context.S` to use `eret` instead of `ret` (restores PSTATE/IRQ state)
+  - Timer fires at 100Hz (10ms) for audio/responsiveness
+  - Preemption check every 5 ticks (50ms timeslice)
+  - `process_schedule_from_irq()` called from timer - updates current_process
+- **Bugs fixed along the way:**
+  - Kernel panic: process slot with invalid context (sp=0) - added safety check
+  - Process exits immediately: pstate missing EL1h mode bits - save as `DAIF | 0x5`
+  - IRQs disabled after voluntary switch: `ret` doesn't restore PSTATE - use `eret`
+  - Context corruption: vectors.S writing to offset 0 instead of 0x50
+- **Final fix:** Restored yield() to actually switch processes
+  - `kapi.yield = process_yield` (not noop)
+  - Apps that yield() switch immediately
+  - Apps that don't yield get preempted after 50ms
+- **Files modified:**
+  - `kernel/process.c` - process_schedule_from_irq(), kernel_context global
+  - `kernel/process.h` - expanded cpu_context_t
+  - `kernel/vectors.S` - full context save/restore, CONTEXT_OFFSET
+  - `kernel/context.S` - eret instead of ret, proper pstate save
+  - `kernel/hal/qemu/irq.c` - timer calls scheduler every 5 ticks
+  - `kernel/hal/pizero2w/irq.c` - same for Pi
+  - `kernel/kapi.c` - yield = process_yield (not noop)
+- **Result:** Preemptive multitasking with cooperative fast path - best of both worlds!

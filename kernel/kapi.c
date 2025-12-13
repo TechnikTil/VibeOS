@@ -33,6 +33,7 @@ static void kapi_exit(int status) {
     process_exit(status);
 }
 
+
 // Print integer (simple implementation)
 static void kapi_print_int(int n) {
     if (n < 0) {
@@ -225,7 +226,7 @@ void kapi_init(void) {
     kapi.exit = kapi_exit;
     kapi.exec = kapi_exec;
     kapi.exec_args = kapi_exec_args;
-    kapi.yield = process_yield;
+    kapi.yield = process_yield;  // Voluntary yield + preemptive backup
     kapi.spawn = kapi_spawn;
     kapi.spawn_args = kapi_spawn_args;
 

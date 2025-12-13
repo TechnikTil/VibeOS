@@ -122,7 +122,7 @@ void kernel_main(void) {
     // Initialize interrupt controller (GIC)
     irq_init();
 
-    // Initialize timer (10ms tick = 100 ticks/second)
+    // Initialize timer (10ms tick = 100 ticks/second, preemption every 5 ticks)
     timer_init(10);
 
     // Initialize RTC (real time clock)
@@ -131,7 +131,7 @@ void kernel_main(void) {
     // Pi: Initialize BCM2836 ARM Local + BCM2835 interrupt controllers
     hal_irq_init();
 
-    // Initialize timer (10ms tick for responsive keyboard polling)
+    // Initialize timer (10ms tick, preemption every 5 ticks = 50ms)
     hal_timer_init(10);
 
     // Initialize GPIO LED

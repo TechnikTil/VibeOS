@@ -1,8 +1,8 @@
 /*
  * VibeOS Process Management
  *
- * Cooperative multitasking - programs call yield() voluntarily.
- * Classic Mac OS / Windows 3.1 style.
+ * Preemptive multitasking - timer IRQ forces context switches.
+ * Processes get ~10ms time slices (100Hz timer).
  */
 
 #ifndef PROCESS_H
@@ -24,17 +24,17 @@ typedef enum {
     PROC_STATE_ZOMBIE        // Exited, waiting to be cleaned up
 } proc_state_t;
 
-// Saved CPU context for context switching
+// Saved CPU context for preemptive context switching
+// Must save ALL registers since interrupt can happen at any instruction
 typedef struct {
-    // General purpose callee-saved registers
-    uint64_t x19, x20, x21, x22, x23, x24, x25, x26, x27, x28;
-    uint64_t x29;  // Frame pointer
-    uint64_t x30;  // Link register (return address)
-    uint64_t sp;   // Stack pointer
+    // ALL general purpose registers (x0-x30)
+    uint64_t x[31];
+    uint64_t sp;         // Stack pointer
+    uint64_t pc;         // Program counter (elr_el1)
+    uint64_t pstate;     // Processor state (spsr_el1)
     // FPU state
     uint64_t fpcr;
     uint64_t fpsr;
-    uint64_t _pad;  // Padding to align fp_regs to 16 bytes (offset 0x80)
     uint64_t fp_regs[64];  // q0-q31 (each 128-bit = 2 x 64-bit)
 } __attribute__((aligned(16))) cpu_context_t;
 
@@ -77,6 +77,9 @@ void process_exit(int status);
 // Get current/specific process
 process_t *process_current(void);
 process_t *process_get(int pid);
+
+// Get pointer to current_process pointer (for assembly IRQ handler)
+process_t **process_get_current_ptr(void);
 
 // Scheduling
 void process_yield(void);              // Give up CPU voluntarily

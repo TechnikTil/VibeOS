@@ -10,6 +10,7 @@
 #include "../../irq.h"
 #include "../../virtio_sound.h"
 #include "../../console.h"
+#include "../../process.h"
 
 // QEMU virt machine GIC addresses
 #define GICD_BASE   0x08000000UL  // Distributor
@@ -66,6 +67,11 @@ static void timer_handler(void) {
     // Blink console cursor (every 50 ticks = 500ms at 100Hz)
     if ((timer_ticks % 50) == 0) {
         console_blink_cursor();
+    }
+
+    // Preemptive scheduling - switch every 5 ticks (50ms timeslice)
+    if ((timer_ticks % 5) == 0) {
+        process_schedule_from_irq();
     }
 
     // Reload timer
