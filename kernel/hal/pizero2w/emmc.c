@@ -246,6 +246,7 @@ static void setup_sd_gpio(void) {
 #define TM_DATA_READ        (1 << 4)
 #define TM_MULTI_BLK        (1 << 5)
 #define TM_BLK_CNT_EN       (1 << 1)
+#define TM_AUTO_CMD12       (1 << 2)  /* Auto CMD12 after multi-block transfer */
 
 /*
  * Send a command to the SD card
@@ -456,6 +457,100 @@ static int write_data_block(const uint8_t *buf, uint32_t bytes) {
 }
 
 /*
+ * Read multiple data blocks (for CMD18)
+ * Reads 'count' blocks of 512 bytes each
+ */
+static int read_data_blocks(uint8_t *buf, uint32_t count) {
+    uint32_t *buf32 = (uint32_t *)buf;
+    int timeout;
+    uint32_t intr;
+
+    for (uint32_t blk = 0; blk < count; blk++) {
+        /* Wait for read ready */
+        timeout = 500000;
+        while (--timeout > 0) {
+            intr = sdhci_read(REG_INTR);
+            if (intr & (INTR_READ_READY | INTR_ERR)) break;
+        }
+
+        if (timeout == 0 || (intr & INTR_ERR)) {
+            printf("[SD] Multi-read timeout/error at block %u: 0x%x\n", blk, intr);
+            return -1;
+        }
+
+        sdhci_write(REG_INTR, INTR_READ_READY);
+
+        /* Read 512 bytes (128 words) from FIFO */
+        for (uint32_t i = 0; i < 128; i++) {
+            *buf32++ = sdhci_read(REG_DATA);
+        }
+    }
+
+    /* Wait for transfer complete */
+    timeout = 100000;
+    while (--timeout > 0) {
+        intr = sdhci_read(REG_INTR);
+        if (intr & (INTR_DATA_DONE | INTR_ERR)) break;
+    }
+
+    sdhci_write(REG_INTR, INTR_DATA_DONE | INTR_ERR);
+
+    if (timeout == 0 || (intr & INTR_ERR)) {
+        printf("[SD] Multi-read complete timeout/error\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
+ * Write multiple data blocks (for CMD25)
+ * Writes 'count' blocks of 512 bytes each
+ */
+static int write_data_blocks(const uint8_t *buf, uint32_t count) {
+    const uint32_t *buf32 = (const uint32_t *)buf;
+    int timeout;
+    uint32_t intr;
+
+    for (uint32_t blk = 0; blk < count; blk++) {
+        /* Wait for write ready */
+        timeout = 500000;
+        while (--timeout > 0) {
+            intr = sdhci_read(REG_INTR);
+            if (intr & (INTR_WRITE_READY | INTR_ERR)) break;
+        }
+
+        if (timeout == 0 || (intr & INTR_ERR)) {
+            printf("[SD] Multi-write timeout/error at block %u\n", blk);
+            return -1;
+        }
+
+        sdhci_write(REG_INTR, INTR_WRITE_READY);
+
+        /* Write 512 bytes (128 words) to FIFO */
+        for (uint32_t i = 0; i < 128; i++) {
+            sdhci_write(REG_DATA, *buf32++);
+        }
+    }
+
+    /* Wait for transfer complete */
+    timeout = 100000;
+    while (--timeout > 0) {
+        intr = sdhci_read(REG_INTR);
+        if (intr & (INTR_DATA_DONE | INTR_ERR)) break;
+    }
+
+    sdhci_write(REG_INTR, INTR_DATA_DONE | INTR_ERR);
+
+    if (timeout == 0 || (intr & INTR_ERR)) {
+        printf("[SD] Multi-write complete timeout/error\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
  * Initialize the SD card and controller
  * Implements the SD card initialization sequence from the SD spec
  */
@@ -634,6 +729,47 @@ int hal_blk_init(void) {
         printf("[SD] 4-bit mode enabled\n");
     }
 
+    /*
+     * Try to enable High Speed mode (CMD6)
+     * Arg: 0x80FFFFF1 = Switch, Access Mode = High Speed (function 1)
+     * Response is 512 bits (64 bytes) of switch status
+     */
+    sdhci_write(REG_BLKSIZECNT, (1 << 16) | 64);
+    uint32_t cmd6_flags = TM_CMD_INDEX(6) | TM_RSP_48 | TM_CRC_EN | TM_DATA | TM_DATA_READ;
+    if (sd_command(cmd6_flags, 0x80FFFFF1, resp) == 0) {
+        /* Read 64 bytes of switch status (we don't really need it) */
+        uint8_t switch_status[64];
+        int hs_ok = 1;
+        int hs_timeout = 100000;
+        uint32_t intr;
+        while (--hs_timeout > 0) {
+            intr = sdhci_read(REG_INTR);
+            if (intr & (INTR_READ_READY | INTR_ERR)) break;
+        }
+        if (hs_timeout > 0 && !(intr & INTR_ERR)) {
+            sdhci_write(REG_INTR, INTR_READ_READY);
+            uint32_t *buf32 = (uint32_t *)switch_status;
+            for (int i = 0; i < 16; i++) {
+                buf32[i] = sdhci_read(REG_DATA);
+            }
+            /* Wait for data done */
+            hs_timeout = 10000;
+            while (--hs_timeout > 0) {
+                intr = sdhci_read(REG_INTR);
+                if (intr & INTR_DATA_DONE) break;
+            }
+            sdhci_write(REG_INTR, INTR_DATA_DONE);
+        } else {
+            hs_ok = 0;
+        }
+
+        if (hs_ok) {
+            /* Switch to 50 MHz for High Speed mode */
+            set_sd_clock(50000000);
+            printf("[SD] High Speed mode enabled (50 MHz)\n");
+        }
+    }
+
     card.ready = 1;
     printf("[SD] Initialization complete\n");
 
@@ -652,27 +788,38 @@ int hal_blk_read(uint32_t sector, void *buf, uint32_t count) {
         return -1;
     }
 
-    uint8_t *ptr = (uint8_t *)buf;
+    if (count == 0) return 0;
 
-    for (uint32_t i = 0; i < count; i++) {
-        /* Set block size and count */
+    /* SDHC uses block addresses, SDSC uses byte addresses */
+    uint32_t addr = card.is_sdhc ? sector : (sector * 512);
+
+    if (count == 1) {
+        /* Single block read - use CMD17 */
         sdhci_write(REG_BLKSIZECNT, (1 << 16) | 512);
 
-        /* SDHC uses block addresses, SDSC uses byte addresses */
-        uint32_t addr = card.is_sdhc ? (sector + i) : ((sector + i) * 512);
-
-        /* CMD17: READ_SINGLE_BLOCK */
         uint32_t cmd = TM_CMD_INDEX(17) | TM_RSP_48 | TM_CRC_EN | TM_DATA | TM_DATA_READ;
         if (sd_command(cmd, addr, NULL) < 0) {
-            printf("[SD] Read command failed at sector %u\n", sector + i);
+            printf("[SD] Read command failed at sector %u\n", sector);
             return -1;
         }
 
-        if (read_data_block(ptr, 512) < 0) {
+        if (read_data_block(buf, 512) < 0) {
+            return -1;
+        }
+    } else {
+        /* Multi-block read - use CMD18 with auto CMD12 */
+        sdhci_write(REG_BLKSIZECNT, (count << 16) | 512);
+
+        uint32_t cmd = TM_CMD_INDEX(18) | TM_RSP_48 | TM_CRC_EN | TM_DATA | TM_DATA_READ |
+                       TM_MULTI_BLK | TM_BLK_CNT_EN | TM_AUTO_CMD12;
+        if (sd_command(cmd, addr, NULL) < 0) {
+            printf("[SD] Multi-read command failed at sector %u\n", sector);
             return -1;
         }
 
-        ptr += 512;
+        if (read_data_blocks(buf, count) < 0) {
+            return -1;
+        }
     }
 
     return 0;
@@ -690,27 +837,38 @@ int hal_blk_write(uint32_t sector, const void *buf, uint32_t count) {
         return -1;
     }
 
-    const uint8_t *ptr = (const uint8_t *)buf;
+    if (count == 0) return 0;
 
-    for (uint32_t i = 0; i < count; i++) {
-        /* Set block size and count */
+    /* SDHC uses block addresses, SDSC uses byte addresses */
+    uint32_t addr = card.is_sdhc ? sector : (sector * 512);
+
+    if (count == 1) {
+        /* Single block write - use CMD24 */
         sdhci_write(REG_BLKSIZECNT, (1 << 16) | 512);
 
-        /* SDHC uses block addresses, SDSC uses byte addresses */
-        uint32_t addr = card.is_sdhc ? (sector + i) : ((sector + i) * 512);
-
-        /* CMD24: WRITE_BLOCK */
         uint32_t cmd = TM_CMD_INDEX(24) | TM_RSP_48 | TM_CRC_EN | TM_DATA;
         if (sd_command(cmd, addr, NULL) < 0) {
-            printf("[SD] Write command failed at sector %u\n", sector + i);
+            printf("[SD] Write command failed at sector %u\n", sector);
             return -1;
         }
 
-        if (write_data_block(ptr, 512) < 0) {
+        if (write_data_block(buf, 512) < 0) {
+            return -1;
+        }
+    } else {
+        /* Multi-block write - use CMD25 with auto CMD12 */
+        sdhci_write(REG_BLKSIZECNT, (count << 16) | 512);
+
+        uint32_t cmd = TM_CMD_INDEX(25) | TM_RSP_48 | TM_CRC_EN | TM_DATA |
+                       TM_MULTI_BLK | TM_BLK_CNT_EN | TM_AUTO_CMD12;
+        if (sd_command(cmd, addr, NULL) < 0) {
+            printf("[SD] Multi-write command failed at sector %u\n", sector);
             return -1;
         }
 
-        ptr += 512;
+        if (write_data_blocks(buf, count) < 0) {
+            return -1;
+        }
     }
 
     return 0;

@@ -57,6 +57,15 @@ static uint8_t sector_buf[512] __attribute__((aligned(16)));
 static uint8_t *cluster_buf = NULL;
 static uint32_t cluster_buf_size = 0;
 
+// FAT sector cache - avoids repeated disk reads when traversing cluster chains
+#define FAT_CACHE_SIZE 8
+static struct {
+    uint32_t sector;      // Which FAT sector is cached (0 = invalid)
+    uint8_t data[512];    // Cached sector data
+    uint32_t lru_counter; // For LRU eviction
+} fat_cache[FAT_CACHE_SIZE];
+static uint32_t fat_cache_counter = 0;
+
 // Read a sector from disk (adds partition offset)
 static int read_sector(uint32_t sector, void *buf) {
     return hal_blk_read(partition_offset + sector, buf, 1);
@@ -75,6 +84,52 @@ static int write_sectors(uint32_t sector, uint32_t count, const void *buf) {
 // Read multiple sectors (adds partition offset)
 static int read_sectors(uint32_t sector, uint32_t count, void *buf) {
     return hal_blk_read(partition_offset + sector, buf, count);
+}
+
+// Read a FAT sector with caching
+// Returns pointer to cached data, or NULL on error
+static uint8_t *fat_read_sector_cached(uint32_t sector) {
+    // Check if already cached
+    for (int i = 0; i < FAT_CACHE_SIZE; i++) {
+        if (fat_cache[i].sector == sector && fat_cache[i].sector != 0) {
+            fat_cache[i].lru_counter = ++fat_cache_counter;
+            return fat_cache[i].data;
+        }
+    }
+
+    // Not cached - find LRU entry to evict
+    int lru_idx = 0;
+    uint32_t min_counter = fat_cache[0].lru_counter;
+    for (int i = 1; i < FAT_CACHE_SIZE; i++) {
+        if (fat_cache[i].sector == 0) {
+            // Found empty slot, use it
+            lru_idx = i;
+            break;
+        }
+        if (fat_cache[i].lru_counter < min_counter) {
+            min_counter = fat_cache[i].lru_counter;
+            lru_idx = i;
+        }
+    }
+
+    // Read sector into cache
+    if (read_sector(sector, fat_cache[lru_idx].data) < 0) {
+        return NULL;
+    }
+
+    fat_cache[lru_idx].sector = sector;
+    fat_cache[lru_idx].lru_counter = ++fat_cache_counter;
+    return fat_cache[lru_idx].data;
+}
+
+// Invalidate a FAT sector in the cache (call after writes)
+static void fat_cache_invalidate(uint32_t sector) {
+    for (int i = 0; i < FAT_CACHE_SIZE; i++) {
+        if (fat_cache[i].sector == sector) {
+            fat_cache[i].sector = 0;
+            return;
+        }
+    }
 }
 
 // MBR partition entry structure
@@ -160,11 +215,13 @@ static uint32_t fat_next_cluster(uint32_t cluster) {
     uint32_t fat_sector = fs.reserved_sectors + (fat_offset / fs.bytes_per_sector);
     uint32_t entry_offset = fat_offset % fs.bytes_per_sector;
 
-    if (read_sector(fat_sector, sector_buf) < 0) {
+    // Use cached FAT read
+    uint8_t *data = fat_read_sector_cached(fat_sector);
+    if (!data) {
         return FAT32_EOC;
     }
 
-    uint32_t next = *(uint32_t *)(sector_buf + entry_offset);
+    uint32_t next = *(uint32_t *)(data + entry_offset);
     return next & 0x0FFFFFFF;  // FAT32 uses only 28 bits
 }
 
@@ -187,6 +244,9 @@ static int fat_set_cluster(uint32_t cluster, uint32_t value) {
     if (write_sector(fat_sector, sector_buf) < 0) {
         return -1;
     }
+
+    // Invalidate cache for this sector (it's now stale)
+    fat_cache_invalidate(fat_sector);
 
     // Write to FAT2 (if exists)
     if (fs.num_fats > 1) {
