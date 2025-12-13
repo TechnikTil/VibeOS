@@ -1191,3 +1191,32 @@ Session 44: USB Keyboard Working on Real Pi Hardware!
   - `kernel/shell.c` - Added `usbstats` recovery command
   - `Makefile` - Added USB subdirectory compilation rules
 - **Stats output:** `[USB-STATS] IRQ=X KBD=X data=X NAK=X err=X restart=X port=X watchdog=X`
+
+### Session 46
+- **SD Card & FAT32 Performance Optimization**
+- **Problem:** SD card operations on Pi were painfully slow
+  - Single-sector commands: Each 512-byte read = separate CMD17 command
+  - No FAT caching: Every cluster lookup read a sector from disk
+  - Low clock speed: Running at 25MHz instead of 50MHz
+- **Optimizations implemented:**
+  1. **Multi-block SD commands** (`kernel/hal/pizero2w/emmc.c`)
+     - Added `read_data_blocks()` / `write_data_blocks()` for multi-sector transfers
+     - CMD18 (READ_MULTIPLE_BLOCK) with auto-CMD12 for reads
+     - CMD25 (WRITE_MULTIPLE_BLOCK) with auto-CMD12 for writes
+     - Single-sector still uses CMD17/CMD24 for compatibility
+  2. **High Speed mode** (`kernel/hal/pizero2w/emmc.c`)
+     - Added CMD6 (SWITCH_FUNC) to enable High Speed mode after init
+     - Clock increased from 25MHz to 50MHz (2x improvement)
+  3. **FAT sector cache** (`kernel/fat32.c`)
+     - 8-entry LRU cache for FAT table sectors
+     - `fat_read_sector_cached()` - returns cached data or reads from disk
+     - `fat_next_cluster()` now uses cached reads
+     - `fat_cache_invalidate()` called on FAT writes to maintain coherency
+- **Performance improvement:**
+  - Reading 8 sectors: 8 commands → 1 command
+  - FAT chain traversal (10 clusters): 10 disk reads → 1-2 reads (cache hits)
+  - Raw transfer speed: 2x (50MHz vs 25MHz)
+- **Files changed:**
+  - `kernel/hal/pizero2w/emmc.c` - Multi-block commands, High Speed mode
+  - `kernel/fat32.c` - FAT sector cache with LRU eviction
+- **Result:** File operations dramatically faster on real Pi hardware
