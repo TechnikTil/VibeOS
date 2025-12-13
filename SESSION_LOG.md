@@ -1298,3 +1298,47 @@ Session 44: USB Keyboard Working on Real Pi Hardware!
   - `kernel/hal/pizero2w/irq.c` - same for Pi
   - `kernel/kapi.c` - yield = process_yield (not noop)
 - **Result:** Preemptive multitasking with cooperative fast path - best of both worlds!
+
+### Session 48
+- **Display Performance Optimizations for Raspberry Pi**
+- **Problem:** vim and other text apps were painfully slow on Pi, but snake/tetris were fine
+- **Root cause analysis:**
+  - Snake/Tetris: only update ~200 changed pixels per frame
+  - Vim: redraws entire screen (~480,000 pixels) on every keystroke
+  - Each `putc(' ')` for clearing = 128 pixel writes
+- **Optimizations implemented:**
+  1. **Fast console clearing functions** (`kernel/console.c`)
+     - `console_clear_to_eol()` - uses `fb_fill_rect` instead of putc loop
+     - `console_clear_region(row, col, w, h)` - fast rectangular clear
+     - Exposed via kapi for userspace programs
+  2. **Pi GPU hardware scroll** (`kernel/hal/pizero2w/fb.c`)
+     - Virtual framebuffer 2x physical height (1200 vs 600 pixels)
+     - `hal_fb_set_scroll_offset(y)` - instant GPU register update
+     - Circular buffer approach: scroll ~37 lines before needing to copy
+     - Wrap copies visible portion back to top, resets offset
+  3. **Vim optimizations** (`user/bin/vim.c`)
+     - `redraw_screen()` clears all rows with one `clear_region` call
+     - `draw_line()` uses `clear_line()` before drawing text
+     - Status/command line use fast clear instead of putc loops
+     - Fixed scroll bug: trailing space on status line triggered unwanted scroll
+- **Hardware scroll bugs fixed:**
+  - "Sideways scrolling" - memmove used `fb_base + scroll_offset` instead of `fb_base + scroll_offset * fb_width`
+  - The offset is Y pixels, must multiply by width to get linear pixel index
+- **Framebuffer bounds fix** (`kernel/fb.c`)
+  - Added `fb_buffer_height` for virtual buffer size
+  - Drawing functions now clip to buffer height, not just visible height
+  - Allows drawing in scroll area above/below visible region
+- **Files modified:**
+  - `kernel/hal/hal.h` - added `hal_fb_set_scroll_offset()`, `hal_fb_get_virtual_height()`
+  - `kernel/hal/pizero2w/fb.c` - 2x virtual height, hardware scroll via mailbox
+  - `kernel/hal/qemu/fb.c` - stub returns -1 (no hardware scroll)
+  - `kernel/fb.c` - fb_buffer_height for bounds checking
+  - `kernel/console.c` - hardware scroll, fast clear functions
+  - `kernel/console.h` - new function declarations
+  - `kernel/kapi.c/h` - exposed clear functions
+  - `user/lib/vibe.h` - kapi struct updated
+  - `user/bin/vim.c` - use fast clear, fix scroll bugs
+- **Performance improvement:**
+  - Console scroll: memmove every line → GPU offset update (37x fewer copies)
+  - Vim clear: ~100 putc per line → 1 fb_fill_rect call
+  - Overall: text apps significantly faster on Pi

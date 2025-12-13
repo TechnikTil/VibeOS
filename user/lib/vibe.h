@@ -30,6 +30,8 @@ typedef struct kapi {
     void (*set_cursor_enabled)(int enabled);  // Enable/disable text cursor
     void (*print_int)(int n);
     void (*print_hex)(uint32_t n);
+    void (*clear_to_eol)(void);      // Fast clear from cursor to end of line
+    void (*clear_region)(int row, int col, int w, int h);  // Fast rectangular clear
 
     // Keyboard
     int  (*has_key)(void);

@@ -405,10 +405,15 @@ static void set_status(const char *msg) {
     strncpy_safe(ed.status_msg, msg, MAX_STATUS_MSG);
 }
 
+// Forward declaration for fast line clearing
+static void clear_line(int row);
+
 static void draw_status_line(void) {
     kapi_t *api = ed.api;
     int row = ed.screen_rows - 1;
 
+    // Fast clear the status line first
+    clear_line(row);
     api->set_cursor(row, 0);
     api->set_color(COLOR_BLACK, COLOR_WHITE);
 
@@ -470,36 +475,64 @@ static void draw_status_line(void) {
     *p = '\0';
 
     int pos_len = strlen(pos_buf);
-    int spaces = ed.screen_cols - cur_col - pos_len - 2;
-    for (int i = 0; i < spaces && i < 200; i++) api->putc(' ');
-
-    api->puts(pos_buf);
-    api->puts(" ");
+    // Move cursor to right side for position display (line already cleared)
+    // Leave 1 char margin to avoid triggering scroll on last column
+    int pos_col = ed.screen_cols - pos_len - 1;
+    if (pos_col > cur_col) {
+        api->set_cursor(row, pos_col);
+        api->puts(pos_buf);
+        // Don't write trailing space - it would push cursor past last column
+        // and trigger a scroll on the status line row
+    }
 }
 
 static void draw_command_line(void) {
     kapi_t *api = ed.api;
     int row = ed.screen_rows - 1;
+    if (row < 0) row = 0;
 
+    // Fast clear the line first
+    clear_line(row);
     api->set_cursor(row, 0);
     api->set_color(COLOR_WHITE, COLOR_BLACK);
 
     api->putc(':');
-    for (int i = 0; i < ed.cmd_len; i++) {
+    // Limit command length to avoid scrolling
+    int max_cmd = ed.screen_cols - 2;  // Leave room for ':' and margin
+    int draw_len = ed.cmd_len < max_cmd ? ed.cmd_len : max_cmd;
+    for (int i = 0; i < draw_len; i++) {
         api->putc(ed.cmd_buf[i]);
     }
+    // No need to clear rest of line - already cleared
+}
 
-    // Clear rest of line
-    for (int i = ed.cmd_len + 1; i < ed.screen_cols; i++) {
-        api->putc(' ');
+// Fast clear from current position to end of line
+// Uses hardware-accelerated clear when available
+static void clear_to_eol(int col) {
+    kapi_t *api = ed.api;
+    // Use fast clear_to_eol which clears from current cursor position
+    if (api->clear_to_eol) {
+        api->clear_to_eol();
+    } else {
+        // Fallback to slow putc loop
+        while (col < ed.screen_cols) {
+            api->putc(' ');
+            col++;
+        }
     }
 }
 
-static void clear_to_eol(int col) {
+// Fast clear entire line (call this before drawing)
+static void clear_line(int row) {
     kapi_t *api = ed.api;
-    while (col < ed.screen_cols) {
-        api->putc(' ');
-        col++;
+    if (api->clear_region) {
+        api->clear_region(row, 0, ed.screen_cols, 1);
+    } else {
+        // Fallback: clear with spaces (stop 1 early to avoid scroll on last row)
+        api->set_cursor(row, 0);
+        for (int i = 0; i < ed.screen_cols - 1; i++) {
+            api->putc(' ');
+        }
     }
 }
 
@@ -508,6 +541,8 @@ static void draw_line(int screen_row, size_t line_pos, int is_eof) {
     kapi_t *api = ed.api;
     size_t len = gap_length(&ed.buf);
 
+    // Fast clear entire line first (much faster than putc(' ') for each empty cell)
+    clear_line(screen_row);
     api->set_cursor(screen_row, 0);
 
     if (!is_eof && line_pos <= len) {
@@ -530,12 +565,12 @@ static void draw_line(int screen_row, size_t line_pos, int is_eof) {
             }
             pos++;
         }
-        clear_to_eol(col);
+        // No need to clear_to_eol - we already cleared the whole line
     } else {
         api->set_color(COLOR_BLUE, COLOR_BLACK);
         api->putc('~');
         api->set_color(COLOR_WHITE, COLOR_BLACK);
-        clear_to_eol(1);
+        // No need to clear_to_eol - we already cleared the whole line
     }
 }
 
@@ -583,6 +618,11 @@ static void redraw_screen(void) {
 
     api->set_color(COLOR_WHITE, COLOR_BLACK);
 
+    // Fast clear all text rows at once if possible
+    if (api->clear_region) {
+        api->clear_region(0, 0, ed.screen_cols, text_rows);
+    }
+
     for (int row = 0; row < text_rows; row++) {
         api->set_cursor(row, 0);
 
@@ -608,8 +648,7 @@ static void redraw_screen(void) {
                 pos++;
             }
 
-            // Clear rest of line
-            clear_to_eol(col);
+            // No clear_to_eol needed - we already cleared all rows
 
             // If we hit end of buffer without newline, mark past_eof
             if (pos >= len) {
@@ -620,7 +659,7 @@ static void redraw_screen(void) {
             api->set_color(COLOR_BLUE, COLOR_BLACK);
             api->putc('~');
             api->set_color(COLOR_WHITE, COLOR_BLACK);
-            clear_to_eol(1);
+            // No clear_to_eol needed - we already cleared all rows
         }
     }
 

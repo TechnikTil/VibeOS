@@ -198,6 +198,8 @@ void kapi_init(void) {
     kapi.set_cursor_enabled = console_set_cursor_enabled;
     kapi.print_int = kapi_print_int;
     kapi.print_hex = kapi_print_hex;
+    kapi.clear_to_eol = console_clear_to_eol;
+    kapi.clear_region = console_clear_region;
 
     // Keyboard
     kapi.has_key = keyboard_has_key;

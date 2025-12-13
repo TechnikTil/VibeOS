@@ -31,6 +31,8 @@ typedef struct {
 
 int hal_fb_init(uint32_t width, uint32_t height);
 hal_fb_info_t *hal_fb_get_info(void);
+int hal_fb_set_scroll_offset(uint32_t y);  // Hardware scroll (returns 0 if supported)
+uint32_t hal_fb_get_virtual_height(void);  // Get total virtual height (for wraparound)
 
 /*
  * Interrupts

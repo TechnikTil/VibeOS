@@ -18,6 +18,8 @@ extern void uart_putc(char c);
 
 // Framebuffer info
 static hal_fb_info_t fb_info = {0};
+static uint32_t virtual_height = 0;  // Total virtual framebuffer height
+static uint32_t current_scroll_y = 0;  // Current scroll offset
 
 // Mailbox registers (ARM physical addresses for Pi Zero 2W / BCM2710)
 #define MAILBOX_BASE        0x3F00B880
@@ -38,6 +40,7 @@ static hal_fb_info_t fb_info = {0};
 #define TAG_SET_VIRT_WH     0x00048004  // Set virtual display width/height
 #define TAG_SET_DEPTH       0x00048005  // Set bits per pixel
 #define TAG_SET_PIXEL_ORDER 0x00048006  // Set pixel order (RGB vs BGR)
+#define TAG_SET_VIRT_OFFSET 0x00048009  // Set virtual offset (for hardware scroll)
 #define TAG_ALLOCATE_FB     0x00040001  // Allocate framebuffer
 #define TAG_GET_PITCH       0x00040008  // Get bytes per row
 
@@ -146,12 +149,14 @@ int hal_fb_init(uint32_t width, uint32_t height) {
     mailbox_buffer[idx++] = width;          // Width
     mailbox_buffer[idx++] = height;         // Height
 
-    // Set virtual display size (same as physical)
+    // Set virtual display size (2x height for hardware scrolling)
+    // This gives us a buffer we can scroll through without copying
+    uint32_t virt_height = height * 2;
     mailbox_buffer[idx++] = TAG_SET_VIRT_WH;
     mailbox_buffer[idx++] = 8;
     mailbox_buffer[idx++] = 0;
     mailbox_buffer[idx++] = width;
-    mailbox_buffer[idx++] = height;
+    mailbox_buffer[idx++] = virt_height;
 
     // Set depth (bits per pixel)
     mailbox_buffer[idx++] = TAG_SET_DEPTH;
@@ -236,6 +241,8 @@ int hal_fb_init(uint32_t width, uint32_t height) {
     fb_info.width = width;
     fb_info.height = height;
     fb_info.pitch = pitch;
+    virtual_height = virt_height;
+    current_scroll_y = 0;
 
     debug_puts("[HAL/FB] Framebuffer at: ");
     debug_hex((uint32_t)(uint64_t)fb_info.base);
@@ -247,9 +254,9 @@ int hal_fb_init(uint32_t width, uint32_t height) {
     debug_hex(pitch);
     debug_puts("\n");
 
-    // Clear to a visible color (blue) so we know it works
-    for (uint32_t i = 0; i < width * height; i++) {
-        fb_info.base[i] = 0x000000FF;  // Blue
+    // Clear entire virtual framebuffer (2x height) to black
+    for (uint32_t i = 0; i < width * virt_height; i++) {
+        fb_info.base[i] = 0x00000000;  // Black
     }
 
     debug_puts("[HAL/FB] Pi framebuffer ready!\n");
@@ -258,4 +265,41 @@ int hal_fb_init(uint32_t width, uint32_t height) {
 
 hal_fb_info_t *hal_fb_get_info(void) {
     return &fb_info;
+}
+
+// Hardware scroll - set the Y offset displayed on screen
+// Returns 0 on success, -1 on failure
+int hal_fb_set_scroll_offset(uint32_t y) {
+    if (y >= virtual_height) return -1;
+    if (y == current_scroll_y) return 0;  // No change needed
+
+    // Build mailbox message to set virtual offset
+    uint32_t idx = 0;
+    mailbox_buffer[idx++] = 0;              // Size (filled in later)
+    mailbox_buffer[idx++] = 0;              // Request code
+
+    mailbox_buffer[idx++] = TAG_SET_VIRT_OFFSET;
+    mailbox_buffer[idx++] = 8;              // Value buffer size
+    mailbox_buffer[idx++] = 0;              // Request/response
+    mailbox_buffer[idx++] = 0;              // X offset (always 0)
+    mailbox_buffer[idx++] = y;              // Y offset
+
+    mailbox_buffer[idx++] = TAG_END;
+    mailbox_buffer[0] = idx * 4;
+
+    dmb();
+    uint32_t bus_addr = arm_to_bus((void *)mailbox_buffer);
+    mailbox_write(MAILBOX_CH_PROP, bus_addr);
+    mailbox_read(MAILBOX_CH_PROP);
+    dmb();
+
+    if (mailbox_buffer[1] == 0x80000000) {
+        current_scroll_y = y;
+        return 0;
+    }
+    return -1;
+}
+
+uint32_t hal_fb_get_virtual_height(void) {
+    return virtual_height;
 }

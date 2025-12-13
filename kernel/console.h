@@ -16,6 +16,8 @@ void console_init(void);
 void console_putc(char c);
 void console_puts(const char *s);
 void console_clear(void);
+void console_clear_to_eol(void);  // Fast clear from cursor to end of line
+void console_clear_region(int row, int col, int width, int height);  // Fast rect clear
 
 // Cursor
 void console_set_cursor(int row, int col);

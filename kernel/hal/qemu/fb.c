@@ -203,3 +203,13 @@ int hal_fb_init(uint32_t width, uint32_t height) {
 hal_fb_info_t *hal_fb_get_info(void) {
     return &fb_info;
 }
+
+// QEMU ramfb doesn't support hardware scroll
+int hal_fb_set_scroll_offset(uint32_t y) {
+    (void)y;
+    return -1;  // Not supported
+}
+
+uint32_t hal_fb_get_virtual_height(void) {
+    return fb_info.height;  // No extra virtual space
+}

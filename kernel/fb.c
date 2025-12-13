@@ -12,9 +12,10 @@
 
 // Framebuffer state - these are exported for backward compatibility
 uint32_t fb_width = 0;
-uint32_t fb_height = 0;
+uint32_t fb_height = 0;        // Visible display height
 uint32_t fb_pitch = 0;
 uint32_t *fb_base = NULL;
+static uint32_t fb_buffer_height = 0;  // Actual buffer height (may be > fb_height for hw scroll)
 
 int fb_init(void) {
     // Note: Don't use printf here - console isn't initialized yet!
@@ -36,22 +37,28 @@ int fb_init(void) {
     fb_height = info->height;
     fb_pitch = info->pitch;
 
-    // Clear to black
-    fb_clear(COLOR_BLACK);
+    // Get actual buffer height (for hardware scroll support)
+    fb_buffer_height = hal_fb_get_virtual_height();
+    if (fb_buffer_height < fb_height) {
+        fb_buffer_height = fb_height;  // Fallback
+    }
+
+    // Clear entire buffer to black (including virtual scroll area)
+    memset32(fb_base, COLOR_BLACK, fb_width * fb_buffer_height);
 
     return 0;
 }
 
 void fb_put_pixel(uint32_t x, uint32_t y, uint32_t color) {
-    if (x >= fb_width || y >= fb_height) return;
+    if (x >= fb_width || y >= fb_buffer_height) return;
     fb_base[y * fb_width + x] = color;
 }
 
 void fb_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
-    // Clip to screen bounds
-    if (x >= fb_width || y >= fb_height) return;
+    // Clip to buffer bounds (not just visible height - needed for hw scroll)
+    if (x >= fb_width || y >= fb_buffer_height) return;
     if (x + w > fb_width) w = fb_width - x;
-    if (y + h > fb_height) h = fb_height - y;
+    if (y + h > fb_buffer_height) h = fb_buffer_height - y;
 
     // Fill row by row using memset32
     for (uint32_t row = y; row < y + h; row++) {
@@ -60,15 +67,16 @@ void fb_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color
 }
 
 void fb_clear(uint32_t color) {
-    memset32(fb_base, color, fb_width * fb_height);
+    // Clear entire buffer including virtual scroll area
+    memset32(fb_base, color, fb_width * fb_buffer_height);
 }
 
 // Include font data
 #include "font.h"
 
 void fb_draw_char(uint32_t x, uint32_t y, char c, uint32_t fg, uint32_t bg) {
-    // Quick bounds check for entire character
-    if (x + FONT_WIDTH > fb_width || y + FONT_HEIGHT > fb_height) return;
+    // Quick bounds check for entire character (use buffer height for hw scroll)
+    if (x + FONT_WIDTH > fb_width || y + FONT_HEIGHT > fb_buffer_height) return;
 
     const uint8_t *glyph = font_data[(uint8_t)c];
     uint32_t *row_ptr = &fb_base[y * fb_width + x];
