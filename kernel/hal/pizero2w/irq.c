@@ -261,14 +261,14 @@ static void on_timer_tick(void) {
     // NOTE: Cursor blink disabled on Pi - was interfering with USB keyboard
     // TODO: Investigate why console_blink_cursor() breaks USB on real hardware
 
-    // Debug: check USB interrupt status every second
-    if (tick_count % 100 == 0) {
-        uint32_t gintsts = DWC2_GINTSTS;
-        uint32_t hprt0 = DWC2_HPRT0;
-        uint32_t hfnum = DWC2_HFNUM;
-        printf("[TICK %llu] GINTSTS=%08x HPRT0=%08x HFNUM=%08x\n",
-               tick_count, gintsts, hprt0, hfnum);
-    }
+    // Debug: check USB interrupt status every second (disabled)
+    // if (tick_count % 100 == 0) {
+    //     uint32_t gintsts = DWC2_GINTSTS;
+    //     uint32_t hprt0 = DWC2_HPRT0;
+    //     uint32_t hfnum = DWC2_HFNUM;
+    //     printf("[TICK %llu] GINTSTS=%08x HPRT0=%08x HFNUM=%08x\n",
+    //            tick_count, gintsts, hprt0, hfnum);
+    // }
 }
 
 /* ========== Public HAL interface ========== */
