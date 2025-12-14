@@ -77,16 +77,27 @@ int hal_usb_init(void) {
     usb_state.initialized = 1;
     printf("[USB] USB initialization complete!\n");
 
-    if (usb_state.keyboard_addr) {
-        printf("[USB] Keyboard at address %d, endpoint %d\n",
-               usb_state.keyboard_addr, usb_state.keyboard_ep);
+    // Setup USB interrupts if we have keyboard or mouse
+    if (usb_state.keyboard_addr || usb_state.mouse_addr) {
+        if (usb_state.keyboard_addr) {
+            printf("[USB] Keyboard at address %d, endpoint %d\n",
+                   usb_state.keyboard_addr, usb_state.keyboard_ep);
+        }
+        if (usb_state.mouse_addr) {
+            printf("[USB] Mouse at address %d, endpoint %d\n",
+                   usb_state.mouse_addr, usb_state.mouse_ep);
+        }
 
         // Clear any pending interrupts first
         GINTSTS = 0xFFFFFFFF;
         dsb();
 
-        // Enable host channel 1 interrupts (keyboard channel)
-        HAINTMSK = (1 << 1);
+        // Enable host channel interrupts:
+        // Channel 1 = keyboard, Channel 2 = mouse
+        uint32_t haint_mask = 0;
+        if (usb_state.keyboard_addr) haint_mask |= (1 << 1);
+        if (usb_state.mouse_addr) haint_mask |= (1 << 2);
+        HAINTMSK = haint_mask;
         dsb();
 
         // Register handler with Pi interrupt controller
@@ -100,12 +111,18 @@ int hal_usb_init(void) {
         printf("[USB] IRQ setup: IRQ=%d GAHBCFG=%08x GINTMSK=%08x HAINTMSK=%08x\n",
                IRQ_VC_USB, GAHBCFG, GINTMSK, HAINTMSK);
 
-        // Start first keyboard transfer
-        usb_start_keyboard_transfer();
+        // Start keyboard transfers
+        if (usb_state.keyboard_addr) {
+            usb_start_keyboard_transfer();
+        }
 
-        // Debug: check state after starting transfer
-        printf("[USB] After start: GINTSTS=%08x HAINT=%08x HCCHAR(1)=%08x HCINT(1)=%08x\n",
-               GINTSTS, HAINT, HCCHAR(1), HCINT(1));
+        // Start mouse transfers
+        if (usb_state.mouse_addr) {
+            usb_start_mouse_transfer();
+        }
+
+        // Debug: check state after starting transfers
+        printf("[USB] After start: GINTSTS=%08x HAINT=%08x\n", GINTSTS, HAINT);
     }
 
     return 0;

@@ -322,6 +322,16 @@ int usb_enumerate_device_at(int parent_addr, int port, int speed) {
     int keyboard_interval = 10;
     int keyboard_interface = 0;
 
+    int found_mouse = 0;
+    int mouse_ep = 0;
+    int mouse_mps = 8;
+    int mouse_interval = 10;
+    int mouse_interface = 0;
+
+    // Track current interface type for endpoint assignment
+    // 0 = none/unknown, 1 = keyboard, 2 = mouse
+    int current_iface_type = 0;
+
     // Parse interfaces
     int offset = config->bLength;
     while (offset < config->wTotalLength && offset < (int)sizeof(config_buf)) {
@@ -336,26 +346,54 @@ int usb_enumerate_device_at(int parent_addr, int port, int speed) {
                       iface->bInterfaceNumber, iface->bInterfaceClass,
                       iface->bInterfaceSubClass, iface->bInterfaceProtocol);
 
+            // Reset current interface type
+            current_iface_type = 0;
+
             if (iface->bInterfaceClass == USB_CLASS_HUB) {
                 is_hub = 1;
             } else if (iface->bInterfaceClass == USB_CLASS_HID) {
                 if (iface->bInterfaceProtocol == USB_HID_PROTOCOL_KEYBOARD) {
-                    usb_info("[USB] Found HID boot keyboard!\n");
-                    found_keyboard = 1;
-                    keyboard_interface = iface->bInterfaceNumber;
+                    // Only capture first keyboard
+                    if (!found_keyboard) {
+                        usb_info("[USB] Found HID boot keyboard!\n");
+                        found_keyboard = 1;
+                        keyboard_interface = iface->bInterfaceNumber;
+                        current_iface_type = 1;  // Next endpoint is for keyboard
+                    } else {
+                        usb_debug("[USB] Skipping additional keyboard interface %d\n",
+                                  iface->bInterfaceNumber);
+                    }
                 } else if (iface->bInterfaceProtocol == USB_HID_PROTOCOL_MOUSE) {
-                    usb_debug("[USB] Found HID boot mouse\n");
+                    // Only capture first mouse
+                    if (!found_mouse) {
+                        usb_info("[USB] Found HID boot mouse!\n");
+                        found_mouse = 1;
+                        mouse_interface = iface->bInterfaceNumber;
+                        current_iface_type = 2;  // Next endpoint is for mouse
+                    } else {
+                        usb_debug("[USB] Skipping additional mouse interface %d\n",
+                                  iface->bInterfaceNumber);
+                    }
                 }
             }
-        } else if (type == USB_DESC_ENDPOINT && found_keyboard && keyboard_ep == 0) {
+        } else if (type == USB_DESC_ENDPOINT) {
             usb_endpoint_descriptor_t *ep = (usb_endpoint_descriptor_t *)&config_buf[offset];
+            // Only interested in interrupt IN endpoints
             if ((ep->bmAttributes & 0x03) == 3 && (ep->bEndpointAddress & 0x80)) {
-                // Interrupt IN endpoint
-                keyboard_ep = ep->bEndpointAddress & 0x0F;
-                keyboard_mps = ep->wMaxPacketSize;
-                keyboard_interval = ep->bInterval;
-                usb_debug("[USB] Keyboard interrupt EP: %d, MPS=%d, interval=%d\n",
-                          keyboard_ep, keyboard_mps, keyboard_interval);
+                // Assign endpoint to current interface type
+                if (current_iface_type == 1 && keyboard_ep == 0) {
+                    keyboard_ep = ep->bEndpointAddress & 0x0F;
+                    keyboard_mps = ep->wMaxPacketSize;
+                    keyboard_interval = ep->bInterval;
+                    usb_info("[USB] Keyboard interrupt EP: %d, MPS=%d, interval=%d\n",
+                              keyboard_ep, keyboard_mps, keyboard_interval);
+                } else if (current_iface_type == 2 && mouse_ep == 0) {
+                    mouse_ep = ep->bEndpointAddress & 0x0F;
+                    mouse_mps = ep->wMaxPacketSize;
+                    mouse_interval = ep->bInterval;
+                    usb_info("[USB] Mouse interrupt EP: %d, MPS=%d, interval=%d\n",
+                              mouse_ep, mouse_mps, mouse_interval);
+                }
             }
         }
 
@@ -431,6 +469,51 @@ int usb_enumerate_device_at(int parent_addr, int port, int speed) {
         usb_info("[USB] Keyboard ready at addr %d EP %d\n", new_addr, keyboard_ep);
     }
 
+    // Save mouse info and configure HID protocol
+    if (found_mouse && mouse_ep > 0) {
+        usb_state.mouse_addr = new_addr;
+        usb_state.mouse_ep = mouse_ep;
+        usb_state.mouse_mps = mouse_mps;
+        usb_state.mouse_interval = mouse_interval;
+
+        usb_info("[USB] Mouse: addr=%d iface=%d ep=%d mps=%d\n",
+                 new_addr, mouse_interface, mouse_ep, mouse_mps);
+
+        // SET_PROTOCOL: Switch to Boot Protocol (0) for simple 3-byte reports
+        usb_setup_packet_t set_protocol = {
+            .bmRequestType = 0x21,  // Host to device, Class, Interface
+            .bRequest = USB_HID_SET_PROTOCOL,
+            .wValue = USB_HID_PROTOCOL_BOOT,  // 0 = Boot Protocol
+            .wIndex = mouse_interface,
+            .wLength = 0
+        };
+        ret = usb_control_transfer(new_addr, &set_protocol, NULL, 0, 0);
+        if (ret < 0) {
+            usb_info("[USB] Mouse SET_PROTOCOL(iface=%d) failed: %d\n", mouse_interface, ret);
+        } else {
+            usb_info("[USB] Mouse SET_PROTOCOL(iface=%d) OK\n", mouse_interface);
+        }
+
+        // SET_IDLE: Set idle rate to 0 (only report on change)
+        usb_setup_packet_t set_idle = {
+            .bmRequestType = 0x21,  // Host to device, Class, Interface
+            .bRequest = USB_HID_SET_IDLE,
+            .wValue = 0,  // Idle rate = 0 (indefinite)
+            .wIndex = mouse_interface,
+            .wLength = 0
+        };
+        ret = usb_control_transfer(new_addr, &set_idle, NULL, 0, 0);
+        if (ret < 0) {
+            usb_debug("[USB] Mouse SET_IDLE failed (OK)\n");
+        } else {
+            usb_debug("[USB] Mouse SET_IDLE OK\n");
+        }
+
+        usb_info("[USB] Mouse ready at addr %d EP %d\n", new_addr, mouse_ep);
+    } else if (found_mouse && mouse_ep == 0) {
+        usb_info("[USB] Mouse interface found but no endpoint!\n");
+    }
+
     return 0;
 }
 
@@ -439,6 +522,7 @@ int usb_enumerate_device(void) {
     usb_state.next_address = 0;
     usb_state.num_devices = 0;
     usb_state.keyboard_addr = 0;
+    usb_state.mouse_addr = 0;
 
     return usb_enumerate_device_at(0, 0, usb_state.device_speed);
 }

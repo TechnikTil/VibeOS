@@ -71,3 +71,23 @@ int hal_usb_get_device_info(int idx, uint16_t *vid, uint16_t *pid,
     (void)name_len;
     return -1;
 }
+
+// Mouse - QEMU uses virtio-tablet, these are stubs
+int hal_mouse_init(void) {
+    return 0;  // Not needed, virtio handles it
+}
+
+void hal_mouse_get_state(int *x, int *y, int *buttons) {
+    // Never called - virtio mouse handles it
+    if (x) *x = 0;
+    if (y) *y = 0;
+    if (buttons) *buttons = 0;
+}
+
+uint32_t hal_mouse_get_irq(void) {
+    return 0;
+}
+
+void hal_mouse_irq_handler(void) {
+    // Not used on QEMU
+}

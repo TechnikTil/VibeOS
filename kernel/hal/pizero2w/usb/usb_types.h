@@ -212,6 +212,12 @@ typedef struct {
     int keyboard_mps;           // Max packet size for interrupt EP
     int keyboard_interval;      // Polling interval
 
+    // Mouse info (if found)
+    int mouse_addr;
+    int mouse_ep;               // Interrupt endpoint
+    int mouse_mps;              // Max packet size for interrupt EP
+    int mouse_interval;         // Polling interval
+
     // Address-0 routing during enumeration behind a hub
     // (needed for split transactions when enumerating FS/LS devices behind HS hubs)
     int enum_parent_hub;        // Hub address (0 = root port)

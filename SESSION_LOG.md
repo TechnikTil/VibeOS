@@ -1409,3 +1409,56 @@ Session 44: USB Keyboard Working on Real Pi Hardware!
   - `kernel/hal/pizero2w/usb/usb_hid.c` - split transaction state tracking
   - `kernel/hal/pizero2w/usb/usb_hid.h` - added kbd_nyet_count to stats
 - **Lesson learned:** For HID devices, FS is perfectly adequate. HS split transactions add complexity with little benefit for low-bandwidth devices.
+
+### Session 51
+- **USB MOUSE WORKING ON RASPBERRY PI!**
+- **Goal:** Get USB mouse working on Pi to enable desktop GUI on real hardware
+- **USB HID Mouse Driver (`kernel/hal/pizero2w/usb/`):**
+  1. **State tracking** (`usb_types.h`)
+     - Added `mouse_addr`, `mouse_ep`, `mouse_mps`, `mouse_interval` to usb_state_t
+  2. **Enumeration** (`usb_enum.c`)
+     - Fixed interface/endpoint parsing for combo devices (keyboard+keyboard+mouse)
+     - Track `current_iface_type` to correctly associate endpoints with their interface
+     - Only captures first keyboard and first mouse (skips duplicates)
+     - Sends SET_PROTOCOL(Boot Protocol) and SET_IDLE to mouse interface
+  3. **Interrupt transfers** (`usb_hid.c`)
+     - Channel 2 for mouse (channel 1 is keyboard)
+     - Mouse ring buffer (32 reports) for ISR→main loop communication
+     - Full split transaction support (same as keyboard)
+     - Mouse stats: `mouse_irq_count`, `mouse_data_count`, `mouse_nak_count`, `mouse_error_count`
+  4. **Init** (`usb.c`)
+     - Enable channel 2 interrupts if mouse detected
+     - Call `usb_start_mouse_transfer()` after enumeration
+- **HAL Mouse Integration:**
+  1. **Pi HAL driver** (`kernel/hal/pizero2w/mouse.c`) - NEW FILE
+     - Implements `hal_mouse_init()`, `hal_mouse_get_state()`
+     - Polls USB HID reports via `hal_usb_mouse_poll()`
+     - Converts relative deltas to absolute screen position
+     - Mouse sensitivity scaling (2x multiplier)
+  2. **Virtio fallback** (`kernel/mouse.c`)
+     - Added HAL fallback when virtio-tablet not found
+     - `mouse_init()` calls `hal_mouse_init()` if no virtio
+     - `mouse_get_screen_pos()` / `mouse_get_buttons()` check `mouse_base` and use HAL
+  3. **QEMU stubs** (`kernel/hal/qemu/platform.c`)
+     - Added `hal_mouse_*` stubs for linking (never called, virtio used)
+- **Test program** (`user/bin/mousetest.c`)
+  - Simple graphical test showing mouse position, cursor, button clicks
+  - Crosshair cursor follows mouse movement
+  - Left (green) and right (red) click indicators
+- **USB Boot Mouse Protocol:**
+  - Byte 0: Buttons (bit 0=left, bit 1=right, bit 2=middle)
+  - Byte 1: X displacement (signed 8-bit)
+  - Byte 2: Y displacement (signed 8-bit)
+- **Files created:**
+  - `kernel/hal/pizero2w/mouse.c` - Pi USB mouse HAL driver
+  - `user/bin/mousetest.c` - Mouse test program
+- **Files modified:**
+  - `kernel/hal/pizero2w/usb/usb_types.h` - mouse state fields
+  - `kernel/hal/pizero2w/usb/usb_enum.c` - mouse enumeration, interface tracking
+  - `kernel/hal/pizero2w/usb/usb_hid.c` - mouse transfers, ring buffer, stats
+  - `kernel/hal/pizero2w/usb/usb_hid.h` - mouse stats struct, function declarations
+  - `kernel/hal/pizero2w/usb/usb.c` - mouse init, channel 2 IRQ enable
+  - `kernel/mouse.c` - HAL fallback for Pi
+  - `kernel/hal/qemu/platform.c` - HAL mouse stubs
+  - `Makefile` - added mousetest to USER_PROGS
+- **Achievement**: Full mouse support on Raspberry Pi! Desktop GUI now possible on real hardware!

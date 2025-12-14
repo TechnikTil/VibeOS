@@ -3,11 +3,13 @@
  *
  * Uses virtio-input (tablet mode) for absolute positioning.
  * QEMU provides virtio-tablet which sends EV_ABS events.
+ * Falls back to HAL mouse driver on Pi (USB HID).
  */
 
 #include "mouse.h"
 #include "printf.h"
 #include "string.h"
+#include "hal/hal.h"
 
 // Virtio MMIO registers (same as keyboard)
 #define VIRTIO_MMIO_BASE        0x0a000000
@@ -176,7 +178,9 @@ int mouse_init(void) {
 
     mouse_base = find_virtio_tablet();
     if (!mouse_base) {
-        return -1;
+        // No virtio tablet - try HAL (USB mouse on Pi)
+        printf("[MOUSE] No virtio tablet, trying HAL...\n");
+        return hal_mouse_init();
     }
 
     // Reset device
@@ -264,7 +268,11 @@ int mouse_init(void) {
 }
 
 void mouse_poll(void) {
-    if (!mouse_base || !used) return;
+    // Fall back to HAL on Pi (no virtio)
+    if (!mouse_base || !used) {
+        // HAL handles its own polling
+        return;
+    }
 
     mb();
     uint16_t current_used = used->idx;
@@ -323,6 +331,12 @@ void mouse_get_pos(int *x, int *y) {
 }
 
 void mouse_get_screen_pos(int *x, int *y) {
+    // Fall back to HAL on Pi (no virtio)
+    if (!mouse_base) {
+        hal_mouse_get_state(x, y, NULL);
+        return;
+    }
+
     mouse_poll();
 
     // Scale from 0-32767 to screen dimensions
@@ -334,6 +348,13 @@ void mouse_get_screen_pos(int *x, int *y) {
 }
 
 uint8_t mouse_get_buttons(void) {
+    // Fall back to HAL on Pi (no virtio)
+    if (!mouse_base) {
+        int buttons = 0;
+        hal_mouse_get_state(NULL, NULL, &buttons);
+        return (uint8_t)buttons;
+    }
+
     mouse_poll();
     return mouse_buttons;
 }

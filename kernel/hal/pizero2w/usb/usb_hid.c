@@ -26,7 +26,7 @@ const usb_debug_stats_t* usb_hid_get_stats(void) {
 }
 
 void usb_hid_print_stats(void) {
-    printf("[USB-STATS] IRQ=%u KBD=%u data=%u NAK=%u NYET=%u err=%u restart=%u port=%u watchdog=%u\n",
+    printf("[USB-STATS] IRQ=%u KBD=%u data=%u NAK=%u NYET=%u err=%u restart=%u port=%u wd=%u\n",
            debug_stats.irq_count,
            debug_stats.kbd_irq_count,
            debug_stats.kbd_data_count,
@@ -36,6 +36,11 @@ void usb_hid_print_stats(void) {
            debug_stats.kbd_restart_count,
            debug_stats.port_irq_count,
            debug_stats.watchdog_kicks);
+    printf("[USB-STATS] MOUSE: IRQ=%u data=%u NAK=%u err=%u\n",
+           debug_stats.mouse_irq_count,
+           debug_stats.mouse_data_count,
+           debug_stats.mouse_nak_count,
+           debug_stats.mouse_error_count);
 }
 
 // ============================================================================
@@ -49,6 +54,40 @@ typedef struct {
 } kbd_ring_t;
 
 static kbd_ring_t kbd_ring = {0};
+
+// ============================================================================
+// Mouse Ring Buffer (ISR writes, main loop reads)
+// ============================================================================
+
+#define MOUSE_RING_SIZE 32
+#define MOUSE_REPORT_SIZE 8  // Boot protocol mouse: 3 bytes min, but some send more
+
+typedef struct {
+    uint8_t reports[MOUSE_RING_SIZE][MOUSE_REPORT_SIZE];
+    volatile int head;  // ISR writes here (producer)
+    volatile int tail;  // Consumer reads here
+} mouse_ring_t;
+
+static mouse_ring_t mouse_ring = {0};
+
+// Push a report to the mouse ring buffer (called from ISR)
+static inline void mouse_ring_push(const uint8_t *report) {
+    int next = (mouse_ring.head + 1) % MOUSE_RING_SIZE;
+    if (next != mouse_ring.tail) {  // Not full
+        memcpy(mouse_ring.reports[mouse_ring.head], report, MOUSE_REPORT_SIZE);
+        mouse_ring.head = next;
+    }
+}
+
+// Pop a report from the mouse ring buffer (called from main loop)
+static inline int mouse_ring_pop(uint8_t *report) {
+    if (mouse_ring.head == mouse_ring.tail) {
+        return 0;  // Empty
+    }
+    memcpy(report, mouse_ring.reports[mouse_ring.tail], MOUSE_REPORT_SIZE);
+    mouse_ring.tail = (mouse_ring.tail + 1) % MOUSE_RING_SIZE;
+    return 1;
+}
 
 // Push a report to the ring buffer (called from ISR)
 static inline void kbd_ring_push(const uint8_t *report) {
@@ -74,11 +113,17 @@ static inline int kbd_ring_pop(uint8_t *report) {
 // DMA Buffers and State
 // ============================================================================
 
-// DMA buffer for interrupt transfers (64-byte aligned for cache)
+// DMA buffer for keyboard interrupt transfers (64-byte aligned for cache)
 static uint8_t __attribute__((aligned(64))) intr_dma_buffer[64];
 
-// Data toggle for interrupt endpoint
+// DMA buffer for mouse interrupt transfers (64-byte aligned for cache)
+static uint8_t __attribute__((aligned(64))) mouse_dma_buffer[64];
+
+// Data toggle for keyboard interrupt endpoint
 static int keyboard_data_toggle = 0;
+
+// Data toggle for mouse interrupt endpoint
+static int mouse_data_toggle = 0;
 
 // Helper to re-enable channel with updated ODDFRM (critical for split transactions)
 static inline void kbd_reenable_channel(int ch) {
@@ -92,15 +137,23 @@ static inline void kbd_reenable_channel(int ch) {
     dsb();
 }
 
-// Transfer state
+// Transfer state - Keyboard (channel 1)
 static volatile int kbd_transfer_pending = 0;
 static volatile uint32_t kbd_last_transfer_tick = 0;  // For watchdog
 
-// Split transaction state for ISR
+// Transfer state - Mouse (channel 2)
+static volatile int mouse_transfer_pending = 0;
+static volatile uint32_t mouse_last_transfer_tick = 0;  // For watchdog
+
+// Split transaction state for keyboard ISR
 static volatile uint16_t split_start_frame = 0;   // Frame when start-split completed
 static volatile int split_nyet_count = 0;         // NYET retries in complete-split
 #define MAX_SPLIT_NYET_RETRIES 50                 // Max NYETs before restart
 #define SPLIT_FRAME_WAIT 8                        // Wait ~1ms (8 microframes) for FS transaction
+
+// Split transaction state for mouse ISR
+static volatile uint16_t mouse_split_start_frame = 0;
+static volatile int mouse_split_nyet_count = 0;
 
 // Port recovery state (set by IRQ, handled by timer)
 static volatile int port_reset_pending = 0;
@@ -181,6 +234,81 @@ static void usb_restart_keyboard_transfer(void) {
     usb_do_keyboard_transfer();
 }
 
+// Internal: configure and start a mouse transfer on channel 2
+static void usb_do_mouse_transfer(void) {
+    int ch = 2;
+    int ep = usb_state.mouse_ep;
+    int addr = usb_state.mouse_addr;
+
+    // Check if channel is still enabled (shouldn't be!)
+    uint32_t old_hcchar = HCCHAR(ch);
+    if (old_hcchar & HCCHAR_CHENA) {
+        // Channel still active - don't start another transfer
+        return;
+    }
+
+    mouse_transfer_pending = 1;
+    mouse_last_transfer_tick = tick_counter;
+
+    // Reset split state for fresh transfer
+    mouse_split_nyet_count = 0;
+    mouse_split_start_frame = 0;
+
+    // Configure split transactions if mouse is FS/LS behind HS hub
+    usb_set_split_if_needed(ch, addr);
+
+    // Configure channel for interrupt IN endpoint
+    uint32_t mps = 64;  // Full speed max
+    uint32_t hcchar = (mps & HCCHAR_MPS_MASK) |
+                      (ep << HCCHAR_EPNUM_SHIFT) |
+                      HCCHAR_EPDIR |                              // IN direction
+                      (HCCHAR_EPTYPE_INTR << HCCHAR_EPTYPE_SHIFT) |
+                      (addr << HCCHAR_DEVADDR_SHIFT) |
+                      (1 << HCCHAR_MC_SHIFT);
+
+    // Odd/even frame scheduling
+    uint32_t fnum = HFNUM & 0xFFFF;
+    if (fnum & 1) {
+        hcchar |= HCCHAR_ODDFRM;
+    }
+
+    // Clear DMA buffer and invalidate cache for receive
+    memset(mouse_dma_buffer, 0, MOUSE_REPORT_SIZE);
+    invalidate_data_cache_range((uintptr_t)mouse_dma_buffer, MOUSE_REPORT_SIZE);
+    dsb();
+
+    // Configure channel interrupts
+    HCINT(ch) = 0xFFFFFFFF;
+    HCINTMSK(ch) = HCINT_CHHLTD | HCINT_NYET | HCINT_XACTERR | HCINT_BBLERR;
+    HCDMA(ch) = arm_to_bus(mouse_dma_buffer);
+    HCCHAR(ch) = hcchar;
+
+    // Transfer size: 8 bytes (mouse boot protocol), 1 packet, DATA0/DATA1 toggle
+    uint32_t pid = mouse_data_toggle ? HCTSIZ_PID_DATA1 : HCTSIZ_PID_DATA0;
+    HCTSIZ(ch) = MOUSE_REPORT_SIZE | (1 << HCTSIZ_PKTCNT_SHIFT) | (pid << HCTSIZ_PID_SHIFT);
+    dsb();
+
+    // Enable channel - transfer starts, interrupt fires on completion
+    HCCHAR(ch) = hcchar | HCCHAR_CHENA;
+    dsb();
+}
+
+// Called from ISR to restart mouse transfer (channel already halted)
+static void usb_restart_mouse_transfer(void) {
+    usb_do_mouse_transfer();
+}
+
+// Helper to re-enable mouse channel with updated ODDFRM
+static inline void mouse_reenable_channel(int ch) {
+    uint32_t hcchar = HCCHAR(ch);
+    hcchar &= ~HCCHAR_ODDFRM;
+    if (HFNUM & 1) hcchar |= HCCHAR_ODDFRM;
+    hcchar |= HCCHAR_CHENA;
+    hcchar &= ~HCCHAR_CHDIS;
+    HCCHAR(ch) = hcchar;
+    dsb();
+}
+
 // ============================================================================
 // USB IRQ Handler (NO PRINTF ALLOWED!)
 // ============================================================================
@@ -226,7 +354,9 @@ void usb_irq_handler(void) {
             // Device disconnected
             usb_state.device_connected = 0;
             usb_state.keyboard_addr = 0;
+            usb_state.mouse_addr = 0;
             kbd_transfer_pending = 0;
+            mouse_transfer_pending = 0;
         }
     }
 
@@ -374,7 +504,113 @@ void usb_irq_handler(void) {
                     continue;  // Skip the HCINT clear below
                 }
 
-                // Clear this channel's interrupts (for non-keyboard channels)
+                // Channel 2 = mouse interrupt transfers
+                if (ch == 2 && usb_state.mouse_addr != 0) {
+                    debug_stats.mouse_irq_count++;
+
+                    // Check split transaction state
+                    uint32_t hcsplt = HCSPLT(ch);
+                    int split_enabled = (hcsplt & HCSPLT_SPLITENA) != 0;
+                    int in_compsplt = (hcsplt & HCSPLT_COMPSPLT) != 0;
+
+                    if (hcint & HCINT_XFERCOMPL) {
+                        // Transfer complete with data
+                        mouse_data_toggle = !mouse_data_toggle;
+
+                        // Invalidate cache to read fresh DMA data
+                        invalidate_data_cache_range((uintptr_t)mouse_dma_buffer, MOUSE_REPORT_SIZE);
+
+                        uint32_t remaining = HCTSIZ(2) & HCTSIZ_XFERSIZE_MASK;
+                        int received = MOUSE_REPORT_SIZE - remaining;
+                        if (received > 0) {
+                            mouse_ring_push(mouse_dma_buffer);
+                            debug_stats.mouse_data_count++;
+                        }
+                        if (split_enabled) {
+                            HCSPLT(ch) &= ~HCSPLT_COMPSPLT;
+                        }
+                    }
+                    else if (hcint & HCINT_CHHLTD) {
+                        if (split_enabled) {
+                            // Start-split phase
+                            if (!in_compsplt && (hcint & (HCINT_ACK | HCINT_NYET))) {
+                                HCINT(ch) = 0xFFFFFFFF;
+                                HCSPLT(ch) |= HCSPLT_COMPSPLT;
+                                mouse_split_start_frame = HFNUM & 0xFFFF;
+                                mouse_split_nyet_count = 0;
+                                dsb();
+                                continue;
+                            }
+
+                            // Complete-split phase - NYET
+                            if (in_compsplt && (hcint & HCINT_NYET)) {
+                                HCINT(ch) = 0xFFFFFFFF;
+                                mouse_split_nyet_count++;
+
+                                if (mouse_split_nyet_count >= MAX_SPLIT_NYET_RETRIES) {
+                                    debug_stats.mouse_error_count++;
+                                    HCSPLT(ch) &= ~HCSPLT_COMPSPLT;
+                                    mouse_split_nyet_count = 0;
+                                } else {
+                                    uint16_t current_frame = HFNUM & 0xFFFF;
+                                    uint16_t frames_elapsed = (current_frame - mouse_split_start_frame) & 0x3FFF;
+                                    if (frames_elapsed >= SPLIT_FRAME_WAIT) {
+                                        mouse_reenable_channel(ch);
+                                    }
+                                    continue;
+                                }
+                            }
+
+                            // Complete-split with ACK - data received
+                            if (in_compsplt && (hcint & HCINT_ACK)) {
+                                mouse_data_toggle = !mouse_data_toggle;
+                                invalidate_data_cache_range((uintptr_t)mouse_dma_buffer, MOUSE_REPORT_SIZE);
+
+                                uint32_t remaining = HCTSIZ(2) & HCTSIZ_XFERSIZE_MASK;
+                                int received = MOUSE_REPORT_SIZE - remaining;
+                                if (received > 0) {
+                                    mouse_ring_push(mouse_dma_buffer);
+                                    debug_stats.mouse_data_count++;
+                                }
+                                HCSPLT(ch) &= ~HCSPLT_COMPSPLT;
+                            }
+                            else if (hcint & HCINT_NAK) {
+                                debug_stats.mouse_nak_count++;
+                                HCSPLT(ch) &= ~HCSPLT_COMPSPLT;
+                            }
+                            else if (hcint & (HCINT_STALL | HCINT_XACTERR | HCINT_BBLERR)) {
+                                debug_stats.mouse_error_count++;
+                                HCSPLT(ch) &= ~HCSPLT_COMPSPLT;
+                            }
+                        } else {
+                            // Non-split transaction
+                            if (hcint & HCINT_ACK) {
+                                mouse_data_toggle = !mouse_data_toggle;
+                                invalidate_data_cache_range((uintptr_t)mouse_dma_buffer, MOUSE_REPORT_SIZE);
+
+                                uint32_t remaining = HCTSIZ(2) & HCTSIZ_XFERSIZE_MASK;
+                                int received = MOUSE_REPORT_SIZE - remaining;
+                                if (received > 0) {
+                                    mouse_ring_push(mouse_dma_buffer);
+                                    debug_stats.mouse_data_count++;
+                                }
+                            }
+                            else if (hcint & HCINT_NAK) {
+                                debug_stats.mouse_nak_count++;
+                            }
+                            else if (hcint & (HCINT_STALL | HCINT_XACTERR | HCINT_BBLERR)) {
+                                debug_stats.mouse_error_count++;
+                            }
+                        }
+                    }
+
+                    HCINT(ch) = 0xFFFFFFFF;
+                    mouse_transfer_pending = 0;
+                    usb_restart_mouse_transfer();
+                    continue;
+                }
+
+                // Clear this channel's interrupts (for non-keyboard/mouse channels)
                 HCINT(ch) = 0xFFFFFFFF;
             }
         }
@@ -442,9 +678,12 @@ void hal_usb_keyboard_tick(void) {
         if (hprt & HPRT0_PRTENA) {
             printf("[USB] Port re-enabled after reset\n");
             port_reset_pending = 0;
-            // Resume keyboard polling
+            // Resume keyboard and mouse polling
             if (usb_state.keyboard_addr != 0) {
                 usb_do_keyboard_transfer();
+            }
+            if (usb_state.mouse_addr != 0) {
+                usb_do_mouse_transfer();
             }
         } else if (tick_counter - port_reset_start_tick >= 10) {
             // Timeout - port didn't enable
@@ -509,6 +748,50 @@ void hal_usb_keyboard_tick(void) {
             usb_do_keyboard_transfer();
         }
     }
+
+    // --- Mouse handling ---
+    if (usb_state.mouse_addr == 0) {
+        return;
+    }
+
+    // Handle mouse split transaction waiting
+    if ((HCSPLT(2) & HCSPLT_COMPSPLT) && !(HCCHAR(2) & HCCHAR_CHENA)) {
+        uint16_t current_frame = HFNUM & 0xFFFF;
+        uint16_t frames_elapsed = (current_frame - mouse_split_start_frame) & 0x3FFF;
+        if (frames_elapsed >= SPLIT_FRAME_WAIT) {
+            mouse_reenable_channel(2);
+        }
+        return;
+    }
+
+    // Mouse watchdog
+    if (mouse_transfer_pending &&
+        (tick_counter - mouse_last_transfer_tick) >= 5) {
+
+        if (HCCHAR(2) & HCCHAR_CHENA) {
+            HCCHAR(2) |= HCCHAR_CHDIS;
+            dsb();
+            for (int i = 0; i < 1000; i++) {
+                if (HCINT(2) & HCINT_CHHLTD) break;
+            }
+            HCINT(2) = 0xFFFFFFFF;
+        }
+
+        HCSPLT(2) &= ~HCSPLT_COMPSPLT;
+        mouse_split_nyet_count = 0;
+        mouse_split_start_frame = 0;
+
+        mouse_transfer_pending = 0;
+        usb_do_mouse_transfer();
+        return;
+    }
+
+    // If no mouse transfer pending, start one
+    if (!mouse_transfer_pending) {
+        if (!(HCCHAR(2) & HCCHAR_CHENA)) {
+            usb_do_mouse_transfer();
+        }
+    }
 }
 
 // Poll keyboard for HID report (non-blocking)
@@ -531,4 +814,52 @@ int hal_usb_keyboard_poll(uint8_t *report, int report_len) {
     }
 
     return 0;  // No data available
+}
+
+// Start mouse interrupt transfers
+void usb_start_mouse_transfer(void) {
+    if (mouse_transfer_pending) {
+        return;
+    }
+    if (usb_state.mouse_addr == 0) {
+        return;
+    }
+
+    // If channel is still active, request disable
+    if (HCCHAR(2) & HCCHAR_CHENA) {
+        HCCHAR(2) |= HCCHAR_CHDIS;
+        dsb();
+        return;
+    }
+
+    printf("[USB] Starting mouse transfers (addr=%d ep=%d)\n",
+           usb_state.mouse_addr, usb_state.mouse_ep);
+    usb_do_mouse_transfer();
+}
+
+// Poll mouse for HID report (non-blocking)
+// Returns number of bytes if data available, 0 if none, -1 on error
+int hal_usb_mouse_poll(uint8_t *report, int report_len) {
+    if (!usb_state.initialized || !usb_state.device_connected) {
+        return -1;
+    }
+
+    if (usb_state.mouse_addr == 0) {
+        return -1;
+    }
+
+    // Pop from ring buffer
+    uint8_t ring_report[MOUSE_REPORT_SIZE];
+    if (mouse_ring_pop(ring_report)) {
+        int len = (report_len < MOUSE_REPORT_SIZE) ? report_len : MOUSE_REPORT_SIZE;
+        memcpy(report, ring_report, len);
+        return len;
+    }
+
+    return 0;  // No data available
+}
+
+// Check if mouse is available
+int hal_usb_mouse_available(void) {
+    return usb_state.initialized && usb_state.device_connected && usb_state.mouse_addr != 0;
 }
