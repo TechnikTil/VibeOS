@@ -36,7 +36,7 @@ extern uint64_t _bss_end;
 
 // Stack location (must match boot.S!)
 #ifdef TARGET_PI
-#define KERNEL_STACK_TOP 0x1F000000   // Pi: 512MB RAM, stack near top
+#define KERNEL_STACK_TOP 0x1B000000   // Pi: Stack in cacheable region (must match boot-pi.S!)
 #define DTB_ADDR         0x00000000   // Pi: DTB at start of RAM
 #else
 #define KERNEL_STACK_TOP 0x5F000000   // QEMU: stack in high RAM

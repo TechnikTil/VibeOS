@@ -1276,19 +1276,25 @@ static void handle_mouse_release(int x, int y) {
     if (resizing_window >= 0) {
         window_t *w = &windows[resizing_window];
 
-        // Free old buffer and allocate new one
-        api->free(w->buffer);
+        // Allocate new buffer before freeing old one (in case malloc fails)
         int content_h = w->h - TITLE_BAR_HEIGHT;
         if (content_h < 1) content_h = 1;
-        w->buffer = api->malloc(w->w * content_h * sizeof(uint32_t));
+        uint32_t *new_buffer = api->malloc(w->w * content_h * sizeof(uint32_t));
 
-        // Clear new buffer to white
-        for (int i = 0; i < w->w * content_h; i++) {
-            w->buffer[i] = COLOR_WHITE;
+        if (new_buffer) {
+            // Success - free old buffer and use new one
+            api->free(w->buffer);
+            w->buffer = new_buffer;
+
+            // Clear new buffer to white
+            for (int i = 0; i < w->w * content_h; i++) {
+                w->buffer[i] = COLOR_WHITE;
+            }
+
+            // Send resize event to app (data1=new width, data2=new height)
+            push_event(resizing_window, WIN_EVENT_RESIZE, w->w, w->h, 0);
         }
-
-        // Send resize event to app (data1=new width, data2=new height)
-        push_event(resizing_window, WIN_EVENT_RESIZE, w->w, w->h, 0);
+        // If malloc failed, keep old buffer and size (resize is cancelled)
 
         resizing_window = -1;
         request_redraw();
