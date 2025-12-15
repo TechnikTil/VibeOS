@@ -93,6 +93,15 @@ static int is_loading = 0;
 static int load_progress = 0;  // 0-100 percent
 static int load_target_track = -1;
 
+// Dirty rectangle flags - only redraw what changed
+static int dirty_sidebar = 1;
+static int dirty_tracklist = 1;
+static int dirty_controls = 1;
+static int dirty_progress = 1;
+
+// Track last displayed time to avoid unnecessary progress redraws
+static int last_displayed_second = -1;
+
 // File loading state
 static uint8_t *load_mp3_data = NULL;
 static int load_file_size = 0;
@@ -442,6 +451,86 @@ static void draw_controls(void) {
     fill_rect(vol_x + 2, y + 30, vol_fill, 6, BLACK);
 }
 
+// Draw only the progress bar area (dirty rectangle optimization)
+static void draw_progress_only(void) {
+    int y = win_h - CONTROLS_H;
+    int prog_y = y + 42;
+    int prog_x = 8;
+    int prog_w = win_w - 100;
+
+    // Clear progress bar area (time labels + bar)
+    fill_rect(prog_x, prog_y, prog_w, 16, WHITE);
+
+    // Time label placeholder
+    draw_string(prog_x, prog_y, "0:00", GRAY, WHITE);
+
+    // Bar background
+    fill_rect(prog_x + 40, prog_y + 4, prog_w - 80, 8, WHITE);
+    draw_rect(prog_x + 40, prog_y + 4, prog_w - 80, 8, BLACK);
+
+    // Progress fill
+    if ((is_playing || (playing_track >= 0 && api->sound_is_paused && api->sound_is_paused()))
+        && pcm_samples > 0 && pcm_sample_rate > 0) {
+        uint32_t elapsed_ms;
+        if (is_playing) {
+            uint32_t now = api->get_uptime_ticks ? api->get_uptime_ticks() : 0;
+            uint32_t elapsed_ticks = now - playback_start_tick;
+            elapsed_ms = elapsed_ticks * 10;
+        } else {
+            elapsed_ms = pause_elapsed_ms;
+        }
+        uint32_t total_ms = ((uint64_t)pcm_samples * 1000) / pcm_sample_rate;
+        if (elapsed_ms > total_ms) elapsed_ms = total_ms;
+
+        int fill_w = ((prog_w - 84) * elapsed_ms) / (total_ms > 0 ? total_ms : 1);
+        if (fill_w > 0) {
+            for (int py = prog_y + 5; py < prog_y + 11; py++) {
+                for (int px = prog_x + 41; px < prog_x + 41 + fill_w; px++) {
+                    if ((px + py) % 2 == 0) {
+                        gfx.buffer[py * gfx.width + px] = BLACK;
+                    }
+                }
+            }
+        }
+
+        // Time display
+        int secs = elapsed_ms / 1000;
+        int mins = secs / 60;
+        secs = secs % 60;
+        char time_str[8];
+        time_str[0] = '0' + mins;
+        time_str[1] = ':';
+        time_str[2] = '0' + (secs / 10);
+        time_str[3] = '0' + (secs % 10);
+        time_str[4] = 0;
+        draw_string(prog_x, prog_y, time_str, BLACK, WHITE);
+
+        // Total time
+        int total_secs = total_ms / 1000;
+        int total_mins = total_secs / 60;
+        total_secs = total_secs % 60;
+        time_str[0] = '0' + total_mins;
+        time_str[1] = ':';
+        time_str[2] = '0' + (total_secs / 10);
+        time_str[3] = '0' + (total_secs % 10);
+        time_str[4] = 0;
+        draw_string(prog_x + prog_w - 32, prog_y, time_str, GRAY, WHITE);
+    } else {
+        draw_string(prog_x + prog_w - 32, prog_y, "0:00", GRAY, WHITE);
+    }
+
+    api->window_invalidate(window_id);
+}
+
+// Check if progress bar second changed (returns current second, or -1 if not playing)
+static int get_current_playback_second(void) {
+    if (!is_playing || pcm_samples == 0 || pcm_sample_rate == 0) return -1;
+    uint32_t now = api->get_uptime_ticks ? api->get_uptime_ticks() : 0;
+    uint32_t elapsed_ticks = now - playback_start_tick;
+    uint32_t elapsed_ms = elapsed_ticks * 10;
+    return elapsed_ms / 1000;
+}
+
 // Now Playing view for single-file mode
 static void draw_now_playing(void) {
     // Full window background
@@ -486,15 +575,54 @@ static void draw_now_playing(void) {
     }
 }
 
-static void draw_all(void) {
+// Draw only dirty regions
+static void draw_dirty(void) {
+    int did_draw = 0;
+
     if (single_file_mode) {
-        draw_now_playing();
+        // In single file mode, sidebar/tracklist flags mean "now playing" area
+        if (dirty_sidebar || dirty_tracklist) {
+            draw_now_playing();
+            dirty_sidebar = 0;
+            dirty_tracklist = 0;
+            did_draw = 1;
+        }
     } else {
-        draw_sidebar();
-        draw_track_list();
+        if (dirty_sidebar) {
+            draw_sidebar();
+            dirty_sidebar = 0;
+            did_draw = 1;
+        }
+        if (dirty_tracklist) {
+            draw_track_list();
+            dirty_tracklist = 0;
+            did_draw = 1;
+        }
     }
-    draw_controls();
-    api->window_invalidate(window_id);
+
+    if (dirty_controls) {
+        draw_controls();
+        dirty_controls = 0;
+        did_draw = 1;
+    } else if (dirty_progress) {
+        // Only progress bar changed, not full controls
+        draw_progress_only();
+        dirty_progress = 0;
+        did_draw = 1;
+    }
+
+    if (did_draw) {
+        api->window_invalidate(window_id);
+    }
+}
+
+// Full redraw (sets all dirty flags and draws)
+static void draw_all(void) {
+    dirty_sidebar = 1;
+    dirty_tracklist = 1;
+    dirty_controls = 1;
+    dirty_progress = 0;  // Controls includes progress
+    draw_dirty();
 }
 
 // ============ Album/Track Loading ============
@@ -988,6 +1116,7 @@ static void toggle_play_pause(void) {
             is_playing = 1;
         }
     }
+    dirty_controls = 1;  // Play/pause button label changed
 }
 
 static void next_track(void) {
@@ -1039,6 +1168,7 @@ static void handle_click(int mx, int my) {
                 volume = ((mx - vol_x) * 100) / 70;
                 if (volume < 0) volume = 0;
                 if (volume > 100) volume = 100;
+                dirty_controls = 1;  // Volume bar changed
                 return;
             }
         }
@@ -1059,6 +1189,8 @@ static void handle_click(int mx, int my) {
             if (my >= item_y && my < item_y + ALBUM_ITEM_H) {
                 selected_album = i;
                 load_tracks(i);
+                dirty_sidebar = 1;    // Album selection changed
+                dirty_tracklist = 1;  // Track list now showing different album
                 return;
             }
         }
@@ -1074,6 +1206,7 @@ static void handle_click(int mx, int my) {
             int item_y = list_y + (i - track_scroll) * TRACK_ITEM_H;
             if (my >= item_y && my < item_y + TRACK_ITEM_H) {
                 selected_track = i;
+                dirty_tracklist = 1;  // Track selection changed
                 return;
             }
         }
@@ -1208,9 +1341,15 @@ int main(kapi_t *k, int argc, char **argv) {
                     } else if (!single_file_mode && (key == 'p' || key == 'P' || key == 0x102)) {
                         prev_track();
                     } else if (!single_file_mode && key == 0x101) {
-                        if (selected_track < track_count - 1) selected_track++;
+                        if (selected_track < track_count - 1) {
+                            selected_track++;
+                            dirty_tracklist = 1;
+                        }
                     } else if (!single_file_mode && key == 0x100) {
-                        if (selected_track > 0) selected_track--;
+                        if (selected_track > 0) {
+                            selected_track--;
+                            dirty_tracklist = 1;
+                        }
                     } else if (!single_file_mode && (key == '\n' || key == '\r')) {
                         if (selected_track >= 0) play_track(selected_track);
                     } else if (key == 'q' || key == 'Q') {
@@ -1226,6 +1365,9 @@ int main(kapi_t *k, int argc, char **argv) {
                     win_w = bw;
                     win_h = bh;
                     gfx_init(&gfx, win_buffer, bw, bh, api->font_data);
+                    dirty_sidebar = 1;
+                    dirty_tracklist = 1;
+                    dirty_controls = 1;
                     break;
                 }
             }
@@ -1237,12 +1379,23 @@ int main(kapi_t *k, int argc, char **argv) {
                 // In single file mode, just stop (don't advance)
                 is_playing = 0;
                 playing_track = -1;
+                dirty_controls = 1;
             } else {
                 next_track();
             }
         }
 
-        draw_all();
+        // Check if progress bar second changed (only updates once per second during playback)
+        if (is_playing) {
+            int current_second = get_current_playback_second();
+            if (current_second != last_displayed_second) {
+                last_displayed_second = current_second;
+                dirty_progress = 1;
+            }
+        }
+
+        // Only redraw what's dirty
+        draw_dirty();
         api->yield();
     }
 

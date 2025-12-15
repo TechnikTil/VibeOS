@@ -27,6 +27,14 @@ static gfx_ctx_t gfx;
 
 #define MAX_PROCESSES 16
 
+// State tracking for dirty-rectangle optimization
+// Only redraw when values actually change
+static unsigned long last_uptime_sec = 0;
+static size_t last_mem_used = 0;
+static int last_proc_count = 0;
+static int last_sound_state = 0;  // 0=idle, 1=playing, 2=paused
+static int needs_redraw = 1;
+
 // Drawing macros
 #define buf_fill_rect(x, y, w, h, c)     gfx_fill_rect(&gfx, x, y, w, h, c)
 #define buf_draw_char(x, y, ch, fg, bg)  gfx_draw_char(&gfx, x, y, ch, fg, bg)
@@ -359,6 +367,34 @@ static void draw_all(void) {
     api->window_invalidate(window_id);
 }
 
+// Check if any displayed values changed
+static void check_for_changes(void) {
+    // Get current values
+    unsigned long ticks = api->get_uptime_ticks();
+    unsigned long current_sec = ticks / 100;
+    size_t mem_used = api->get_mem_used();
+    int proc_count = api->get_process_count();
+
+    int sound_state = 0;  // idle
+    if (api->sound_is_playing && api->sound_is_playing()) {
+        sound_state = 1;  // playing
+    } else if (api->sound_is_paused && api->sound_is_paused()) {
+        sound_state = 2;  // paused
+    }
+
+    // Check if anything changed
+    if (current_sec != last_uptime_sec ||
+        mem_used != last_mem_used ||
+        proc_count != last_proc_count ||
+        sound_state != last_sound_state) {
+        needs_redraw = 1;
+        last_uptime_sec = current_sec;
+        last_mem_used = mem_used;
+        last_proc_count = proc_count;
+        last_sound_state = sound_state;
+    }
+}
+
 // ============ CLI Output ============
 
 static void print_cli(void) {
@@ -487,9 +523,8 @@ int main(kapi_t *kapi, int argc, char **argv) {
     // Initial draw
     draw_all();
 
-    // Event loop with periodic refresh
+    // Event loop - only redraw when data changes
     int running = 1;
-    int refresh_counter = 0;
 
     while (running) {
         int event_type, data1, data2, data3;
@@ -506,16 +541,18 @@ int main(kapi_t *kapi, int argc, char **argv) {
                 case WIN_EVENT_RESIZE:
                     win_buffer = api->window_get_buffer(window_id, &win_w, &win_h);
                     gfx_init(&gfx, win_buffer, win_w, win_h, api->font_data);
-                    draw_all();
+                    needs_redraw = 1;
                     break;
             }
         }
 
-        // Refresh display every ~1 second (60 frames * 16ms)
-        refresh_counter++;
-        if (refresh_counter >= 60) {
-            refresh_counter = 0;
+        // Check if displayed values changed
+        check_for_changes();
+
+        // Only redraw if something changed
+        if (needs_redraw) {
             draw_all();
+            needs_redraw = 0;
         }
 
         api->yield();
