@@ -58,7 +58,8 @@ static uint8_t *cluster_buf = NULL;
 static uint32_t cluster_buf_size = 0;
 
 // FAT sector cache - avoids repeated disk reads when traversing cluster chains
-#define FAT_CACHE_SIZE 8
+// Larger cache = fewer disk reads when scanning FAT (df, free space checks)
+#define FAT_CACHE_SIZE 64
 static struct {
     uint32_t sector;      // Which FAT sector is cached (0 = invalid)
     uint8_t data[512];    // Cached sector data
@@ -678,6 +679,71 @@ int fat32_read_file(const char *path, void *buf, size_t size) {
 
         memcpy(dst + bytes_read, cluster_buf, to_copy);
         bytes_read += to_copy;
+
+        cluster = fat_next_cluster(cluster);
+    }
+
+    return (int)bytes_read;
+}
+
+/*
+ * Read file with offset support - avoids reading entire file for partial reads
+ * Returns bytes read, or -1 on error
+ */
+int fat32_read_file_offset(const char *path, void *buf, size_t size, size_t offset) {
+    if (!fs_initialized) return -1;
+
+    uint32_t cluster;
+    fat32_dirent_t *entry = resolve_path(path, &cluster);
+
+    if (!entry) {
+        return -1;  // File not found
+    }
+
+    if (entry->attr & FAT_ATTR_DIRECTORY) {
+        return -1;  // Can't read a directory as a file
+    }
+
+    uint32_t file_size = entry->size;
+
+    // Handle offset beyond file
+    if (offset >= file_size) return 0;
+
+    // Clamp size to what's available
+    if (offset + size > file_size) {
+        size = file_size - offset;
+    }
+    if (size == 0) return 0;
+
+    uint8_t *dst = (uint8_t *)buf;
+    size_t bytes_read = 0;
+    size_t file_pos = 0;  // Current position in file
+
+    // Skip clusters until we reach the offset
+    while (cluster < FAT32_EOC && file_pos + cluster_buf_size <= offset) {
+        file_pos += cluster_buf_size;
+        cluster = fat_next_cluster(cluster);
+    }
+
+    // Now read clusters starting from the one containing offset
+    while (cluster < FAT32_EOC && bytes_read < size) {
+        if (read_cluster(cluster, cluster_buf) < 0) {
+            return -1;
+        }
+
+        // Calculate how much of this cluster to use
+        size_t cluster_offset = 0;
+        if (file_pos < offset) {
+            cluster_offset = offset - file_pos;
+        }
+
+        size_t available = cluster_buf_size - cluster_offset;
+        size_t to_copy = size - bytes_read;
+        if (to_copy > available) to_copy = available;
+
+        memcpy(dst + bytes_read, cluster_buf + cluster_offset, to_copy);
+        bytes_read += to_copy;
+        file_pos += cluster_buf_size;
 
         cluster = fat_next_cluster(cluster);
     }

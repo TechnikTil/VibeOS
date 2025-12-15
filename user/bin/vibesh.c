@@ -464,6 +464,7 @@ static void builtin_help(void) {
     sh_puts("  cd <dir>    Change directory\n");
     sh_puts("  exit        Exit shell\n");
     sh_puts("  clear       Clear screen\n");
+    sh_puts("  time <cmd>  Time command execution\n");
     sh_puts("  help        Show this help\n");
     sh_puts("\nLine editing:\n");
     sh_puts("  Up/Down     Browse command history\n");
@@ -547,6 +548,78 @@ static int execute_command(char *cmd) {
     if (strcmp(argv[0], "clear") == 0) {
         sh_clear();
         return 0;
+    }
+
+    // time <command> - measure execution time
+    if (strcmp(argv[0], "time") == 0) {
+        if (argc < 2) {
+            sh_puts("usage: time <command> [args...]\n");
+            return 1;
+        }
+
+        // Get start time
+        uint64_t start_ticks = k->get_uptime_ticks();
+
+        // Execute the command (argv+1, argc-1)
+        int result;
+        if (strcmp(argv[1], "cd") == 0) {
+            result = builtin_cd(argc - 1, argv + 1);
+        } else if (strcmp(argv[1], "help") == 0) {
+            builtin_help();
+            result = 0;
+        } else if (strcmp(argv[1], "clear") == 0) {
+            sh_clear();
+            result = 0;
+        } else {
+            result = exec_external(argc - 1, argv + 1);
+        }
+
+        // Get end time
+        uint64_t end_ticks = k->get_uptime_ticks();
+        uint64_t elapsed = end_ticks - start_ticks;
+
+        // Convert to seconds and milliseconds (100 ticks/sec)
+        uint64_t secs = elapsed / 100;
+        uint64_t ms = (elapsed % 100) * 10;
+
+        // Print timing
+        sh_putc('\n');
+        sh_set_color(COLOR_CYAN, COLOR_BLACK);
+        sh_puts("real\t");
+        sh_set_color(COLOR_WHITE, COLOR_BLACK);
+
+        // Print seconds
+        char num[32];
+        int i = 0;
+        if (secs == 0) {
+            num[i++] = '0';
+        } else {
+            uint64_t tmp = secs;
+            int start = i;
+            while (tmp > 0) {
+                num[i++] = '0' + (tmp % 10);
+                tmp /= 10;
+            }
+            // Reverse
+            for (int j = start; j < (start + i) / 2; j++) {
+                char c = num[j];
+                num[j] = num[start + i - 1 - j];
+                num[start + i - 1 - j] = c;
+            }
+        }
+        num[i] = '\0';
+        sh_puts(num);
+        sh_putc('.');
+
+        // Print ms with leading zeros (3 digits)
+        num[0] = '0' + (ms / 100);
+        num[1] = '0' + ((ms / 10) % 10);
+        num[2] = '0' + (ms % 10);
+        num[3] = '\0';
+        sh_puts(num);
+        sh_puts("s\n");
+
+        return result;
     }
 
     return exec_external(argc, argv);

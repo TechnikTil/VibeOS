@@ -1664,3 +1664,38 @@ Session 44: USB Keyboard Working on Real Pi Hardware!
 - `user/lib/vibe.h` - dma_fill in userspace kapi
 - `user/bin/desktop.c` - Use dma_fill for buffer clears
 - `docs/optimization_audit.md` - Updated status
+
+## Session 54: SD Card DMA & VFS Partial Read Fix
+
+**Goal**: Optimize SD card reads with DMA, fix major VFS performance bug.
+
+### VFS Partial Read Fix (THE BIG WIN)
+- **Bug**: `vfs_read()` was reading ENTIRE file for every partial read
+  - 64KB chunk from 64MB file = read 64MB, copy 64KB, free
+  - 1024 chunks = 65GB disk I/O for 64MB file!
+- **Fix**: Added `fat32_read_file_offset()` with proper offset/size handling
+  - Skips clusters to reach offset, reads only needed data
+- **Result**: 10+ minutes → 0.170s for 1MB file (>3500x improvement)
+
+### SD Card DMA (Multi-block reads)
+- Added DMA support using BCM2837 DMA controller (channel 4)
+- DREQ pacing from EMMC peripheral (DREQ 11)
+- Tight polling (removed delay_us busy waits)
+- Single-block reads still use FIFO (DMA overhead not worth it)
+- Note: DMA enabled but ~same speed - bottleneck is SD card itself
+
+### Other Improvements
+- FAT cache increased: 8 → 64 sectors
+- `time` command added to vibesh (measures command execution)
+- `readtest` benchmark tool (reads file, discards data)
+- Disk activity LED: blinks at 20Hz during I/O
+- Heartbeat LED: 1Hz when idle
+
+### Files Modified
+- `kernel/fat32.c`, `kernel/fat32.h` - Added `fat32_read_file_offset()`
+- `kernel/vfs.c` - Use offset-aware read
+- `kernel/hal/pizero2w/emmc.c` - DMA read support, disk activity LED
+- `kernel/hal/pizero2w/irq.c` - 1Hz heartbeat
+- `user/bin/vibesh.c` - `time` builtin command
+- `user/bin/readtest.c` - New benchmark tool
+- `Makefile` - Added readtest

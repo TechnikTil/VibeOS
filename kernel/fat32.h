@@ -74,6 +74,11 @@ int fat32_init(void);
 // Returns: bytes read, or -1 on error
 int fat32_read_file(const char *path, void *buf, size_t size);
 
+// Read file with offset support (efficient partial reads)
+// offset: byte offset to start reading from
+// Returns: bytes read, or -1 on error
+int fat32_read_file_offset(const char *path, void *buf, size_t size, size_t offset);
+
 // Get file size
 // Returns: file size in bytes, or -1 on error
 int fat32_file_size(const char *path);

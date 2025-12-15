@@ -14,6 +14,20 @@
 #include "../../string.h"
 #include "../../memory.h"
 
+/* LED for disk activity indicator - rate limited to ~20Hz */
+extern void led_toggle(void);
+extern uint64_t hal_timer_get_ticks(void);
+
+static void disk_activity_led(void) {
+    static uint64_t last_toggle = 0;
+    uint64_t now = hal_timer_get_ticks();
+    /* Toggle at most every 3 ticks (30ms) = ~17Hz */
+    if (now - last_toggle >= 3) {
+        led_toggle();
+        last_toggle = now;
+    }
+}
+
 /* BCM2710 (Pi Zero 2W) peripheral base address */
 #define BCM_PERIPH_BASE     0x3F000000
 
@@ -110,6 +124,180 @@ static struct {
     uint32_t rca;          /* Relative Card Address */
     uint32_t clk_base;     /* Base clock frequency in Hz */
 } card;
+
+/*
+ * DMA support for EMMC
+ * Uses BCM2837 DMA controller for fast block transfers
+ */
+#define DMA_BASE            0x3F007000
+#define EMMC_DMA_CHANNEL    4   /* Use channel 4 for EMMC (0 is used for FB) */
+#define EMMC_DREQ           11  /* EMMC peripheral DREQ number */
+
+/* DMA register offsets */
+#define DMA_CS              0x00
+#define DMA_CONBLK_AD       0x04
+#define DMA_ENABLE          0xFF0
+
+/* DMA CS bits */
+#define DMA_CS_ACTIVE       (1 << 0)
+#define DMA_CS_END          (1 << 1)
+#define DMA_CS_INT          (1 << 2)
+#define DMA_CS_ERROR        (1 << 8)
+#define DMA_CS_PRIORITY(x)  (((x) & 0xF) << 16)
+#define DMA_CS_PANIC_PRI(x) (((x) & 0xF) << 20)
+#define DMA_CS_WAIT_WRITES  (1 << 28)
+#define DMA_CS_RESET        (1 << 31)
+
+/* DMA Transfer Info bits */
+#define DMA_TI_INTEN        (1 << 0)
+#define DMA_TI_WAIT_RESP    (1 << 3)
+#define DMA_TI_DEST_INC     (1 << 4)
+#define DMA_TI_DEST_DREQ    (1 << 6)
+#define DMA_TI_SRC_INC      (1 << 8)
+#define DMA_TI_SRC_DREQ     (1 << 10)
+#define DMA_TI_PERMAP(x)    (((x) & 0x1F) << 16)
+
+/* SDHCI interrupt bits (needed by DMA functions) */
+#define INTR_CMD_DONE       (1 << 0)
+#define INTR_DATA_DONE      (1 << 1)
+#define INTR_WRITE_READY    (1 << 4)
+#define INTR_READ_READY     (1 << 5)
+#define INTR_ERR            0xFFFF0000
+
+/* DMA Control Block (must be 32-byte aligned) */
+typedef struct __attribute__((aligned(32))) {
+    uint32_t ti;
+    uint32_t source_ad;
+    uint32_t dest_ad;
+    uint32_t txfr_len;
+    uint32_t stride;
+    uint32_t nextconbk;
+    uint32_t reserved[2];
+} emmc_dma_cb_t;
+
+static emmc_dma_cb_t __attribute__((aligned(32))) emmc_dma_cb;
+static int emmc_dma_enabled = 0;
+
+/* Convert ARM physical address to bus address for DMA */
+static inline uint32_t arm_to_bus(void *ptr) {
+    return ((uint32_t)(uint64_t)ptr) | 0xC0000000;
+}
+
+/* EMMC DATA register bus address */
+#define EMMC_DATA_BUS       (0x7E300000 + REG_DATA)  /* VideoCore bus address */
+
+static inline uint32_t emmc_dma_read(int reg) {
+    return *(volatile uint32_t *)(DMA_BASE + EMMC_DMA_CHANNEL * 0x100 + reg);
+}
+
+static inline void emmc_dma_write(int reg, uint32_t val) {
+    *(volatile uint32_t *)(DMA_BASE + EMMC_DMA_CHANNEL * 0x100 + reg) = val;
+}
+
+static inline uint32_t emmc_dma_read_global(int reg) {
+    return *(volatile uint32_t *)(DMA_BASE + reg);
+}
+
+static inline void emmc_dma_write_global(int reg, uint32_t val) {
+    *(volatile uint32_t *)(DMA_BASE + reg) = val;
+}
+
+static void emmc_dma_init(void) {
+    /* Enable DMA channel */
+    uint32_t enable = emmc_dma_read_global(DMA_ENABLE);
+    emmc_dma_write_global(DMA_ENABLE, enable | (1 << EMMC_DMA_CHANNEL));
+    mem_barrier();
+
+    /* Reset the channel */
+    emmc_dma_write(DMA_CS, DMA_CS_RESET);
+    mem_barrier();
+
+    /* Wait for reset with timeout */
+    int timeout = 10000;
+    while ((emmc_dma_read(DMA_CS) & DMA_CS_RESET) && --timeout > 0) {
+        delay_us(1);
+    }
+
+    /* Clear any pending status */
+    emmc_dma_write(DMA_CS, DMA_CS_END | DMA_CS_INT);
+    mem_barrier();
+
+    emmc_dma_enabled = 1;
+    printf("[SD] DMA enabled on channel %d\n", EMMC_DMA_CHANNEL);
+}
+
+static int emmc_dma_wait(void) {
+    /* Tight poll - DMA is fast, no need for delays */
+    for (int i = 0; i < 10000000; i++) {
+        uint32_t cs = emmc_dma_read(DMA_CS);
+        if (!(cs & DMA_CS_ACTIVE)) {
+            emmc_dma_write(DMA_CS, DMA_CS_END | DMA_CS_INT);
+            mem_barrier();
+            return (cs & DMA_CS_ERROR) ? -1 : 0;
+        }
+    }
+    printf("[SD] DMA timeout\n");
+    emmc_dma_write(DMA_CS, DMA_CS_END | DMA_CS_INT);
+    return -1;
+}
+
+/*
+ * DMA-based block read from EMMC
+ * Uses DREQ pacing - DMA waits for EMMC to signal data ready
+ */
+static int read_data_blocks_dma(uint8_t *buf, uint32_t count) {
+    uint32_t bytes = count * 512;
+
+    /* Invalidate cache for destination buffer before DMA */
+    cache_invalidate(buf, bytes);
+
+    /* Set up DMA control block:
+     * - Read from EMMC DATA register (fixed address)
+     * - Write to buffer (incrementing address)
+     * - Use DREQ pacing from EMMC peripheral
+     */
+    emmc_dma_cb.ti = DMA_TI_DEST_INC | DMA_TI_WAIT_RESP |
+                     DMA_TI_SRC_DREQ | DMA_TI_PERMAP(EMMC_DREQ);
+    emmc_dma_cb.source_ad = EMMC_DATA_BUS;
+    emmc_dma_cb.dest_ad = arm_to_bus(buf);
+    emmc_dma_cb.txfr_len = bytes;
+    emmc_dma_cb.stride = 0;
+    emmc_dma_cb.nextconbk = 0;
+
+    /* Clean cache for control block */
+    cache_clean(&emmc_dma_cb, sizeof(emmc_dma_cb));
+    mem_barrier();
+
+    /* Point DMA to control block and start */
+    emmc_dma_write(DMA_CONBLK_AD, arm_to_bus(&emmc_dma_cb));
+    mem_barrier();
+    emmc_dma_write(DMA_CS, DMA_CS_ACTIVE | DMA_CS_PRIORITY(8) | DMA_CS_PANIC_PRI(15) | DMA_CS_WAIT_WRITES);
+
+    /* Wait for DMA to complete */
+    if (emmc_dma_wait() < 0) {
+        printf("[SD] DMA read failed\n");
+        return -1;
+    }
+
+    /* Wait for EMMC transfer complete - tight poll */
+    uint32_t intr;
+    for (int i = 0; i < 10000000; i++) {
+        intr = sdhci_read(REG_INTR);
+        if (intr & (INTR_DATA_DONE | INTR_ERR)) break;
+    }
+
+    sdhci_write(REG_INTR, INTR_DATA_DONE | INTR_ERR);
+
+    if (intr & INTR_ERR) {
+        printf("[SD] DMA transfer complete error: 0x%x\n", intr);
+        return -1;
+    }
+
+    /* Invalidate cache so CPU sees DMA-written data */
+    cache_invalidate(buf, bytes);
+
+    return 0;
+}
 
 /* Mailbox property buffer - must be 16-byte aligned for GPU */
 static uint32_t __attribute__((aligned(16))) prop_buf[32];
@@ -229,13 +417,6 @@ static void setup_sd_gpio(void) {
     // Enable pull-ups on GPIO 48-53 (bits 16-21 in bank 1)
     gpio_set_pull_mask(0x3F0000, 1, GPIO_PULL_UP);
 }
-
-/* SDHCI interrupt bits */
-#define INTR_CMD_DONE       (1 << 0)
-#define INTR_DATA_DONE      (1 << 1)
-#define INTR_WRITE_READY    (1 << 4)
-#define INTR_READ_READY     (1 << 5)
-#define INTR_ERR            0xFFFF0000
 
 /* Command flags for CMDTM register */
 #define TM_CMD_INDEX(n)     ((n) << 24)
@@ -775,6 +956,9 @@ int hal_blk_init(void) {
     card.ready = 1;
     printf("[SD] Initialization complete\n");
 
+    /* Initialize DMA for faster block transfers */
+    emmc_dma_init();
+
     return 0;
 }
 
@@ -792,11 +976,15 @@ int hal_blk_read(uint32_t sector, void *buf, uint32_t count) {
 
     if (count == 0) return 0;
 
+    /* Disk activity LED */
+    disk_activity_led();
+
     /* SDHC uses block addresses, SDSC uses byte addresses */
     uint32_t addr = card.is_sdhc ? sector : (sector * 512);
 
     if (count == 1) {
         /* Single block read - use CMD17 */
+        /* Note: DMA overhead too high for single 512-byte blocks, use FIFO */
         sdhci_write(REG_BLKSIZECNT, (1 << 16) | 512);
 
         uint32_t cmd = TM_CMD_INDEX(17) | TM_RSP_48 | TM_CRC_EN | TM_DATA | TM_DATA_READ;
@@ -819,8 +1007,15 @@ int hal_blk_read(uint32_t sector, void *buf, uint32_t count) {
             return -1;
         }
 
-        if (read_data_blocks(buf, count) < 0) {
-            return -1;
+        /* Use DMA if available, fall back to FIFO */
+        if (emmc_dma_enabled) {
+            if (read_data_blocks_dma(buf, count) < 0) {
+                return -1;
+            }
+        } else {
+            if (read_data_blocks(buf, count) < 0) {
+                return -1;
+            }
         }
     }
 
@@ -840,6 +1035,9 @@ int hal_blk_write(uint32_t sector, const void *buf, uint32_t count) {
     }
 
     if (count == 0) return 0;
+
+    /* Disk activity LED */
+    disk_activity_led();
 
     /* SDHC uses block addresses, SDSC uses byte addresses */
     uint32_t addr = card.is_sdhc ? sector : (sector * 512);

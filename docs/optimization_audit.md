@@ -594,11 +594,12 @@ case WIN_EVENT_MOUSE_UP:
 | Priority | Category | Speedup | Effort | Dependencies |
 |----------|----------|---------|--------|--------------|
 | ~~P0~~ | ~~Desktop dirty rects~~ | ~~10x~~ | ~~Medium~~ | ✅ DONE |
+| ~~P1~~ | ~~DMA for SD card~~ | ~~4-8x~~ | ~~Medium~~ | ✅ DONE (multi-block reads) |
+| ~~P2~~ | ~~VFS partial read~~ | ~~3500x~~ | ~~Medium~~ | ✅ DONE - was reading entire file! |
+| ~~P2~~ | ~~FAT cache increase~~ | ~~8x~~ | ~~Low~~ | ✅ DONE (8→64 sectors) |
 | P1 | DMA fill (fix cache issues) | 10-50x | Medium | Works in desktop, broken in term/console |
-| P1 | DMA for SD card | 4-8x | Medium | None |
 | P1 | Sysmon O(1) counters | 10x | Low | None |
 | P2 | FAT32 free cluster cache | 100x | Low | None |
-| P2 | VFS partial read | 100x | Medium | FAT32 changes |
 | P2 | Scheduler ready queue | 16x | Medium | None |
 | P3 | Memory allocator bins | 5-10x | High | None |
 
@@ -612,17 +613,20 @@ case WIN_EVENT_MOUSE_UP:
 - Vsync implemented
 - Desktop dirty tracking
 
-### Phase 2: DMA Acceleration
+### ✅ Phase 2: VFS & SD Card - DONE
+- VFS partial read fix (3500x speedup - was reading entire file for every chunk!)
+- DMA for SD multi-block reads
+- FAT cache increased 8→64 sectors
+
+### Phase 3: DMA Acceleration (Partial)
 **Goal**: Use the DMA hardware we already initialize
 
-1. Use `hal_dma_fill()` for framebuffer clears
-2. Update `fb_fill_rect()` to use 2D DMA
-3. Update `console.c` scroll to use DMA copy
-4. Add DMA to EMMC driver for block transfers
+1. ✅ Add DMA to EMMC driver for block transfers
+2. Use `hal_dma_fill()` for framebuffer clears (works in desktop, broken in term)
+3. Update `fb_fill_rect()` to use 2D DMA
+4. Update `console.c` scroll to use DMA copy
 
-**Expected Result**: 10-50x faster screen and disk operations
-
-### Phase 3: FAT32 Improvements
+### Phase 4: FAT32 Improvements
 **Goal**: Eliminate O(n) scans
 
 1. Cache free cluster count in memory
@@ -816,11 +820,12 @@ malloc(PROCESS_STACK_SIZE);              // Allocate 1MB stack
 | ~~P0~~ | ~~Infinite loop timeouts~~ | ~~∞~~ | ~~Low~~ | ✅ **DONE** |
 | ~~P0~~ | ~~Vsync before buffer flip~~ | ~~Fixes flicker~~ | ~~Low~~ | ✅ **DONE** |
 | ~~P1~~ | ~~Desktop dirty rectangles~~ | ~~5-10x~~ | ~~Medium~~ | ✅ **DONE** |
+| ~~P1~~ | ~~DMA for SD card~~ | ~~4-8x~~ | ~~Medium~~ | ✅ **DONE** (multi-block reads) |
+| ~~P2~~ | ~~VFS partial read~~ | ~~3500x~~ | ~~Medium~~ | ✅ **DONE** - was catastrophic bug! |
+| ~~P2~~ | ~~FAT cache increase~~ | ~~8x~~ | ~~Low~~ | ✅ **DONE** (8→64 sectors) |
 | **P1** | Sysmon memory stat caching | 10x for sysmon | Low | O(1) counters needed |
 | **P1** | DMA fill (fix cache issues) | 10-50x | Medium | Works in desktop, cache issues in term/console |
-| **P1** | DMA for SD card | 4-8x | Medium | FIFO reads are slow |
 | **P2** | FAT32 free cluster cache | 10-100x | Low | Track count, don't rescan |
-| **P2** | VFS partial read | 100x | Medium | Don't load entire file |
 | **P2** | Scheduler ready queue | 16x | Medium | O(1) next process |
 | **P3** | Memory allocator bins | 2-5x | High | Less critical now |
 
@@ -834,17 +839,18 @@ malloc(PROCESS_STACK_SIZE);              // Allocate 1MB stack
 2. **Infinite loop timeouts** - No more random hangs
 3. **Vsync added** - No more flicker
 4. **Desktop dirty tracking** - Efficient redraws
+5. **VFS partial read** - 3500x faster file reads (was re-reading entire file per chunk!)
+6. **DMA for SD card** - Multi-block reads use DMA
+7. **FAT cache** - Increased 8→64 sectors
 
 ### Remaining Optimization Opportunities
 
 **High Impact (P1)**:
 - **Sysmon** - Add O(1) memory stat counters (Finding #11)
 - **DMA fill** - Implemented, works in desktop, cache issues in term/console (Finding #1)
-- **DMA for SD card** - Replace FIFO loops (Finding #2)
 
 **Medium Impact (P2)**:
 - **FAT32 caching** - Track free cluster count (Finding #3)
-- **VFS partial reads** - Don't load entire file (Finding #4)
 - **Scheduler ready queue** - O(1) process selection (Finding #7)
 
 **Lower Priority (P3)**:

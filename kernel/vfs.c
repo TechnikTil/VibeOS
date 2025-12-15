@@ -543,27 +543,8 @@ int vfs_read(vfs_node_t *file, char *buf, size_t size, size_t offset) {
         const char *filepath = (const char *)file->data;
         if (!filepath) return -1;
 
-        // For now, read full file and return portion
-        // TODO: optimize with offset support in fat32_read_file
-        int file_size = fat32_file_size(filepath);
-        if (file_size < 0) return -1;
-        if ((int)offset >= file_size) return 0;
-
-        char *temp = malloc(file_size);
-        if (!temp) return -1;
-
-        int read = fat32_read_file(filepath, temp, file_size);
-        if (read < 0) {
-            free(temp);
-            return -1;
-        }
-
-        size_t to_copy = read - offset;
-        if (to_copy > size) to_copy = size;
-        memcpy(buf, temp + offset, to_copy);
-
-        free(temp);
-        return (int)to_copy;
+        // Use offset-aware read - only reads what's needed
+        return fat32_read_file_offset(filepath, buf, size, offset);
     } else {
         if (offset >= file->size) {
             return 0;
