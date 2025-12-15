@@ -127,4 +127,16 @@ int hal_usb_get_device_count(void);
 int hal_usb_get_device_info(int idx, uint16_t *vid, uint16_t *pid,
                             char *name, int name_len);
 
+/*
+ * DMA (Direct Memory Access)
+ * Hardware-accelerated memory transfers (Pi only, QEMU uses CPU fallback)
+ */
+int hal_dma_init(void);
+int hal_dma_available(void);
+int hal_dma_copy(void *dst, const void *src, uint32_t len);
+int hal_dma_copy_2d(void *dst, uint32_t dst_pitch,
+                    const void *src, uint32_t src_pitch,
+                    uint32_t width, uint32_t height);
+int hal_dma_fb_copy(uint32_t *dst, const uint32_t *src, uint32_t width, uint32_t height);
+
 #endif // HAL_H

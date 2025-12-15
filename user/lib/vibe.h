@@ -196,6 +196,15 @@ typedef struct kapi {
     int (*fb_has_hw_double_buffer)(void);    // Returns 1 if hardware double buffering available
     int (*fb_flip)(int buffer);              // Switch visible buffer (0 or 1), returns 0 on success
     uint32_t *(*fb_get_backbuffer)(void);    // Get pointer to current backbuffer
+
+    // DMA (Direct Memory Access) - hardware accelerated memory copies (Pi only)
+    int (*dma_available)(void);              // Returns 1 if DMA is available
+    int (*dma_copy)(void *dst, const void *src, uint32_t len);  // 1D copy
+    int (*dma_copy_2d)(void *dst, uint32_t dst_pitch,           // 2D blit
+                       const void *src, uint32_t src_pitch,
+                       uint32_t width, uint32_t height);
+    int (*dma_fb_copy)(uint32_t *dst, const uint32_t *src,      // Full framebuffer copy
+                       uint32_t width, uint32_t height);
 } kapi_t;
 
 // TTF glyph info (returned by ttf_get_glyph)

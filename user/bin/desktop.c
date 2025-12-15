@@ -704,26 +704,44 @@ static void draw_window(int wid) {
     int title_y = w->y + 3;
     bb_draw_string(title_x, title_y, w->title, COLOR_BLACK, COLOR_WHITE);
 
-    // Content area - copy from window buffer (row-wise for speed)
+    // Content area - copy from window buffer
     int content_y = w->y + TITLE_BAR_HEIGHT + 2;
     int content_h = w->h - TITLE_BAR_HEIGHT - 4;
     int content_w = w->w - 4;
 
-    for (int py = 0; py < content_h; py++) {
-        int screen_y = content_y + py;
-        if (screen_y >= SCREEN_HEIGHT) break;
+    // Check if window is fully on screen (no clipping needed)
+    int fully_visible = (w->x + 2 >= 0) &&
+                        (w->x + 2 + content_w <= SCREEN_WIDTH) &&
+                        (content_y >= 0) &&
+                        (content_y + content_h <= SCREEN_HEIGHT);
 
-        int dst_offset = screen_y * SCREEN_WIDTH + w->x + 2;
-        int src_offset = py * w->w;
+    if (fully_visible && api->dma_available && api->dma_available() && content_w > 0 && content_h > 0) {
+        // Use DMA 2D copy for fast rectangular blit
+        uint32_t *dst = &backbuffer[content_y * SCREEN_WIDTH + w->x + 2];
+        uint32_t dst_pitch = SCREEN_WIDTH * sizeof(uint32_t);
+        uint32_t *src = w->buffer;
+        uint32_t src_pitch = w->w * sizeof(uint32_t);
+        uint32_t copy_bytes = content_w * sizeof(uint32_t);
 
-        // Clip width to screen bounds
-        int copy_w = content_w;
-        if (w->x + 2 + copy_w > SCREEN_WIDTH) {
-            copy_w = SCREEN_WIDTH - (w->x + 2);
-        }
-        if (copy_w > 0) {
-            // Use 64-bit copy for entire row
-            memcpy64(&backbuffer[dst_offset], &w->buffer[src_offset], copy_w * sizeof(uint32_t));
+        api->dma_copy_2d(dst, dst_pitch, src, src_pitch, copy_bytes, content_h);
+    } else {
+        // Fallback: row-wise copy with clipping
+        for (int py = 0; py < content_h; py++) {
+            int screen_y = content_y + py;
+            if (screen_y >= SCREEN_HEIGHT) break;
+
+            int dst_offset = screen_y * SCREEN_WIDTH + w->x + 2;
+            int src_offset = py * w->w;
+
+            // Clip width to screen bounds
+            int copy_w = content_w;
+            if (w->x + 2 + copy_w > SCREEN_WIDTH) {
+                copy_w = SCREEN_WIDTH - (w->x + 2);
+            }
+            if (copy_w > 0) {
+                // Use 64-bit copy for entire row
+                memcpy64(&backbuffer[dst_offset], &w->buffer[src_offset], copy_w * sizeof(uint32_t));
+            }
         }
     }
 
@@ -913,6 +931,9 @@ static void flip_buffer(void) {
         // Update backbuffer pointer to the now-hidden buffer
         backbuffer = api->fb_get_backbuffer();
         gfx.buffer = backbuffer;
+    } else if (api->dma_available && api->dma_available()) {
+        // DMA copy - hardware accelerated, frees CPU (Pi)
+        api->dma_fb_copy(api->fb_base, backbuffer, SCREEN_WIDTH, SCREEN_HEIGHT);
     } else {
         // Software copy (QEMU fallback) - use fast 64-bit copy
         memcpy64(api->fb_base, backbuffer, SCREEN_WIDTH * SCREEN_HEIGHT * sizeof(uint32_t));

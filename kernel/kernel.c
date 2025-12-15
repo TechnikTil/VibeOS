@@ -70,6 +70,9 @@ void kernel_main(void) {
     fb_init();
     console_init();
 
+    // Initialize DMA for fast memory transfers (Pi only, QEMU uses CPU fallback)
+    hal_dma_init();
+
 
     // Now printf works on both UART (QEMU) and screen (Pi)
     printf("  ╦  ╦╦╔╗ ╔═╗╔═╗╔═╗\n");

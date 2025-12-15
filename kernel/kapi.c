@@ -362,4 +362,10 @@ void kapi_init(void) {
     kapi.fb_has_hw_double_buffer = fb_has_hw_double_buffer;
     kapi.fb_flip = fb_flip;
     kapi.fb_get_backbuffer = fb_get_backbuffer;
+
+    // DMA (hardware accelerated memory copies)
+    kapi.dma_available = hal_dma_available;
+    kapi.dma_copy = hal_dma_copy;
+    kapi.dma_copy_2d = hal_dma_copy_2d;
+    kapi.dma_fb_copy = hal_dma_fb_copy;
 }

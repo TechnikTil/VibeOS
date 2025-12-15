@@ -1511,3 +1511,51 @@ Session 44: USB Keyboard Working on Real Pi Hardware!
 - `user/lib/vibe.h` - added memset32_fast, memcpy64, new kapi fields
 - `kernel/fb.c` / `kernel/fb.h` - hardware double buffer functions
 - `kernel/kapi.c` / `kernel/kapi.h` - new fb_flip API
+
+---
+
+## Session 42 - DMA Support for Pi Framebuffer
+
+- **Added DMA (Direct Memory Access) support for Raspberry Pi**
+- **Goal:** Offload memory copies from CPU to hardware DMA controller for faster framebuffer operations
+
+### DMA Driver (`kernel/hal/pizero2w/dma.c`)
+- BCM2837 DMA controller driver using channel 0 (supports full 2D mode)
+- Control blocks are 32-byte aligned, use bus addresses (physical | 0xC0000000)
+- Three copy operations:
+  - `hal_dma_copy()` - 1D linear memory-to-memory transfer
+  - `hal_dma_copy_2d()` - 2D rectangular blit with stride support
+  - `hal_dma_fb_copy()` - Full framebuffer copy
+- DMA waits for completion synchronously (simpler, avoids race conditions)
+
+### HAL Interface (`kernel/hal/hal.h`)
+- Added DMA function declarations
+- QEMU stub (`kernel/hal/qemu/dma.c`) uses CPU memcpy as fallback
+
+### Kernel API (`kernel/kapi.h`, `kernel/kapi.c`)
+- Exposed DMA functions to userspace: `dma_available()`, `dma_copy()`, `dma_copy_2d()`, `dma_fb_copy()`
+- DMA initialized in `kernel.c` after framebuffer init
+
+### Desktop Integration (`user/bin/desktop.c`)
+- `flip_buffer()` uses DMA for software fallback path (when HW double buffering unavailable)
+- Window content blitting uses DMA 2D copy for fully-visible windows
+- Falls back to CPU copy when window is clipped or DMA unavailable
+
+### Technical Details
+- DMA base address: 0x3F007000 (Pi Zero 2W / BCM2837)
+- Channel spacing: 0x100 bytes per channel
+- Uses uncached bus address alias (0xC0000000) for coherent DMA
+- Control block structure: TI, SOURCE_AD, DEST_AD, TXFR_LEN, STRIDE, NEXTCONBK
+- 2D mode: TXFR_LEN = (YLENGTH << 16) | XLENGTH, STRIDE = (D_STRIDE << 16) | S_STRIDE
+
+### Files Created
+- `kernel/hal/pizero2w/dma.c` - Pi DMA controller driver
+- `kernel/hal/qemu/dma.c` - QEMU CPU fallback stub
+
+### Files Modified
+- `kernel/hal/hal.h` - DMA function declarations
+- `kernel/kernel.c` - DMA init call
+- `kernel/kapi.h` - DMA kapi struct fields
+- `kernel/kapi.c` - DMA function wiring
+- `user/lib/vibe.h` - DMA function pointers in userspace kapi
+- `user/bin/desktop.c` - DMA integration in flip_buffer and window blit
