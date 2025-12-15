@@ -40,8 +40,9 @@ static uint64_t next_load_addr = 0;
 // Program entry point signature
 typedef int (*program_entry_t)(kapi_t *api, int argc, char **argv);
 
-// Forward declaration
+// Forward declarations
 static void process_entry_wrapper(void);
+static void kill_children(int parent_pid);
 
 void process_init(void) {
     // Clear process table
@@ -288,6 +289,9 @@ void process_exit(int status) {
     printf("[PROC] Process '%s' (pid %d) exited with status %d\n",
            proc->name, proc->pid, status);
 
+    // Kill all children of this process before exiting
+    kill_children(proc->pid);
+
     proc->exit_status = status;
     proc->state = PROC_STATE_ZOMBIE;
 
@@ -490,6 +494,29 @@ void process_schedule_from_irq(void) {
     }
 }
 
+// Kill all children of a process (recursive)
+static void kill_children(int parent_pid) {
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (proc_table[i].state != PROC_STATE_FREE &&
+            proc_table[i].parent_pid == parent_pid) {
+            int child_pid = proc_table[i].pid;
+            // First kill grandchildren recursively
+            kill_children(child_pid);
+            // Then kill this child (skip if it's current process)
+            if (i != current_pid) {
+                printf("[PROC] Killing child '%s' (pid %d, parent %d)\n",
+                       proc_table[i].name, child_pid, parent_pid);
+                if (proc_table[i].stack_base) {
+                    free(proc_table[i].stack_base);
+                    proc_table[i].stack_base = NULL;
+                }
+                proc_table[i].state = PROC_STATE_FREE;
+                proc_table[i].pid = 0;
+            }
+        }
+    }
+}
+
 // Kill a process by PID
 int process_kill(int pid) {
     // Don't allow killing kernel (pid would be invalid anyway)
@@ -521,6 +548,9 @@ int process_kill(int pid) {
     }
 
     printf("[PROC] Killing process '%s' (pid %d)\n", proc->name, pid);
+
+    // First kill all children of this process
+    kill_children(pid);
 
     // Free the process memory
     if (proc->stack_base) {

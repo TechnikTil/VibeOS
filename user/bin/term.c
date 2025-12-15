@@ -65,6 +65,9 @@ static int input_tail = 0;
 // Flag to track if shell is still running
 static int shell_running = 1;
 
+// Dirty flag - screen needs redraw
+static int screen_dirty = 0;
+
 // Scrollbar state
 static int scrollbar_dragging = 0;
 static int scrollbar_drag_start_y = 0;
@@ -199,7 +202,7 @@ static void update_cursor_blink(void) {
     if (now - last_blink_tick >= 50) {
         cursor_visible = !cursor_visible;
         last_blink_tick = now;
-        redraw_screen();
+        screen_dirty = 1;  // Defer redraw to main loop
     }
 }
 
@@ -394,12 +397,12 @@ static void term_puts(const char *s) {
 
 static void stdio_hook_putc(char c) {
     term_putc(c);
-    redraw_screen();
+    screen_dirty = 1;  // Defer redraw to main loop
 }
 
 static void stdio_hook_puts(const char *s) {
     term_puts(s);
-    redraw_screen();
+    screen_dirty = 1;  // Defer redraw to main loop
 }
 
 static int stdio_hook_getc(void) {
@@ -628,8 +631,19 @@ int main(kapi_t *kapi, int argc, char **argv) {
         // Update cursor blink
         update_cursor_blink();
 
+        // Redraw if dirty (once per frame, not per character)
+        if (screen_dirty) {
+            redraw_screen();
+            screen_dirty = 0;
+        }
+
         // Yield to other processes
         api->yield();
+    }
+
+    // Kill the shell process if it's still running
+    if (shell_pid > 0 && api->kill_process) {
+        api->kill_process(shell_pid);
     }
 
     // Clean up stdio hooks
