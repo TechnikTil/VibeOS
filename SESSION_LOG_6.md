@@ -769,3 +769,178 @@ These eliminate the boilerplate `out_putc`/`out_puts` functions every program ne
 - Escape - Toggle help panel
 - Tab - Insert 4 spaces
 - Arrow keys, Home, End, PgUp, PgDn - Navigation
+
+---
+
+## Session 42: DOOM Port via doomgeneric
+
+**Date**: December 16, 2024
+
+Ported DOOM to VibeOS using the doomgeneric platform abstraction layer.
+
+### Why doomgeneric?
+
+- Platform-agnostic DOOM port - only requires 6 functions
+- Clean separation from platform code
+- No SDL/OpenGL dependencies
+- Already ported to many embedded systems
+
+### Port Structure
+
+Created `user/bin/doom/` with:
+
+1. **`doomgeneric_vibeos.c`** (~280 lines) - Platform implementation:
+   - `DG_Init()` - Record start ticks, clear screen
+   - `DG_DrawFrame()` - Copy 640x400 screen buffer to framebuffer (centered in 800x600)
+   - `DG_SleepMs(ms)` - `kapi->sleep_ms(ms)`
+   - `DG_GetTicksMs()` - `kapi->get_uptime_ticks() * 10` (100Hz → ms)
+   - `DG_GetKey()` - Poll keyboard, translate keycodes, queue events
+   - `DG_SetWindowTitle()` - No-op
+
+2. **`doom_libc.c`** (~900 lines) - C library adapted from TCC libc:
+   - FILE*, fopen, fread, fwrite, fseek, ftell, fclose
+   - printf, sprintf, snprintf, fprintf
+   - malloc, free, realloc, calloc
+   - String functions (strlen, strcpy, strcmp, strstr, strchr, strdup, etc.)
+   - Character functions (isalpha, isdigit, isspace, toupper, tolower)
+   - qsort, bsearch, atoi, strtol, abs
+   - rename() - for save games
+
+3. **`doom_libc.h`** - Header declarations
+
+4. **`Makefile`** - Compiles 73 doomgeneric source files, links with doom_libc
+
+5. **`include/`** - Standard C headers (stdio.h, stdlib.h, string.h, etc.)
+
+### Input System
+
+**Keyboard:**
+- Arrow keys → DOOM arrow keys
+- WASD → Movement (W=up, A=strafe left, S=down, D=strafe right)
+- Space, E → KEY_USE (open doors)
+- Ctrl → KEY_RCTRL (fire)
+- Shift → KEY_RSHIFT (run)
+- Escape, Enter, Tab → Menu navigation
+- 1-9 → Weapon selection
+- F1-F12 → Function keys
+
+**Key release simulation:**
+- VibeOS has no key-up events
+- After 100ms without new key press, generate release events for held keys
+
+**Mouse:**
+- Left button → Fire
+- Right button → Secondary fire
+- X movement → Turning (dx * 2 sensitivity)
+- Y movement → Ignored (no mouse look)
+
+### Kernel Changes for DOOM
+
+**Ctrl/Shift as standalone keys** (`kernel/keyboard.c`):
+- Added `SPECIAL_KEY_CTRL` (0x109) and `SPECIAL_KEY_SHIFT` (0x10A)
+- Previously only used as modifiers, now also sent as key events
+
+**Mouse delta tracking** (`kernel/mouse.c`):
+- Added `mouse_get_delta(int *dx, int *dy)` function
+- Accumulates movement since last call, then clears
+- Returns raw deltas for infinite turning
+- Works on both QEMU (virtio-tablet) and Pi (USB mouse)
+
+**Pi mouse position reset** (`kernel/hal/pizero2w/mouse.c`):
+- Added `hal_mouse_set_pos(int x, int y)` to warp mouse
+- Called to keep mouse centered (prevents edge hitting)
+
+**VFS rename fix** (`kernel/vfs.c`):
+- `vfs_rename()` now extracts basename before calling `fat32_rename()`
+- Fixed bug where files were created with full path as filename
+- Enables save games to work
+
+**kapi additions** (`kernel/kapi.h`, `user/lib/vibe.h`):
+- `mouse_get_delta(int *dx, int *dy)` - Raw mouse movement
+- `rename(const char *oldpath, const char *newpath)` - File rename
+
+### Build Integration
+
+Makefile changes:
+- Added DOOM to build (compiles doomgeneric sources)
+- Copies binary to `/bin/doom`
+- Detects source changes for incremental rebuild
+
+Excluded from build:
+- Platform-specific files (*_sdl.c, *_win.c, etc.)
+- Sound code (no audio support yet)
+
+### Usage
+
+```bash
+# Copy doom1.wad to disk (shareware WAD, free to distribute)
+# Place at /games/doom1.wad
+
+# In VibeOS:
+doom
+# or with explicit WAD path:
+doom -iwad /games/doom1.wad
+```
+
+### Controls Summary
+
+| Input | Action |
+|-------|--------|
+| Arrow keys / WASD | Move |
+| Ctrl / Left mouse | Fire |
+| Shift | Run |
+| Space / E | Use (doors) |
+| Mouse X | Turn |
+| 1-9 | Select weapon |
+| Escape | Menu |
+| F1 | Help |
+
+### Files Created
+- `user/bin/doom/Makefile`
+- `user/bin/doom/doom_libc.c`
+- `user/bin/doom/doom_libc.h`
+- `user/bin/doom/doomgeneric_vibeos.c`
+- `user/bin/doom/include/*.h` (standard C headers)
+
+### Files Modified
+- `Makefile` - DOOM build integration
+- `kernel/keyboard.c` - Ctrl/Shift as key events
+- `kernel/mouse.c` - mouse_get_delta()
+- `kernel/mouse.h` - Function declaration
+- `kernel/hal/pizero2w/mouse.c` - hal_mouse_set_pos()
+- `kernel/hal/qemu/platform.c` - hal_mouse_set_pos() stub
+- `kernel/hal/hal.h` - hal_mouse_set_pos() declaration
+- `kernel/vfs.c` - rename basename extraction
+- `kernel/kapi.c` - mouse_get_delta, rename wrappers
+- `kernel/kapi.h` - kapi struct additions
+- `user/lib/vibe.h` - kapi struct additions
+
+### Binary Size
+- Text: ~650KB
+- Data: ~50KB
+- BSS: ~4.6MB (frame buffers, game state)
+- Total: ~5.5MB
+
+### Performance
+- Runs at playable framerate on QEMU
+- Works on Raspberry Pi Zero 2W
+- No sound (could add virtio-sound support later)
+
+### What Works
+- Full gameplay (E1M1 through shareware content)
+- Mouse aiming with infinite turning
+- Save/load games
+- All weapons, enemies, items
+- Menu system
+
+### What's Missing
+- Sound effects and music
+- Network multiplayer
+- Loading custom PWADs (could add)
+
+### Lessons Learned
+1. **Key release events** - Many games expect key-up events; faking them with timeout works
+2. **Mouse deltas** - Position-based mouse capture doesn't work well; use raw deltas
+3. **FAT32 rename** - Expects just filename, not full path
+4. **doomgeneric is clean** - Only 6 functions needed, rest is portable C code
+5. **Pi USB mouse** - Works via USB HID polling, same delta approach works
