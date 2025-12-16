@@ -633,6 +633,120 @@ static mp_obj_t mod_vibe_window_draw_hline(size_t n_args, const mp_obj_t *args) 
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_vibe_window_draw_hline_obj, 5, 5, mod_vibe_window_draw_hline);
 
 // ============================================================================
+// TTF Font Rendering
+// ============================================================================
+
+// vibe.ttf_is_ready() -> bool
+static mp_obj_t mod_vibe_ttf_is_ready(void) {
+    return mp_obj_new_bool(mp_vibeos_api->ttf_is_ready());
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(mod_vibe_ttf_is_ready_obj, mod_vibe_ttf_is_ready);
+
+// vibe.ttf_get_glyph(codepoint, size, style) -> dict or None
+// Returns: {bitmap: bytes, width: int, height: int, xoff: int, yoff: int, advance: int}
+static mp_obj_t mod_vibe_ttf_get_glyph(mp_obj_t cp_obj, mp_obj_t size_obj, mp_obj_t style_obj) {
+    int cp = mp_obj_get_int(cp_obj);
+    int size = mp_obj_get_int(size_obj);
+    int style = mp_obj_get_int(style_obj);
+
+    ttf_glyph_t *glyph = (ttf_glyph_t *)mp_vibeos_api->ttf_get_glyph(cp, size, style);
+    if (!glyph || !glyph->bitmap) return mp_const_none;
+
+    mp_obj_t dict = mp_obj_new_dict(6);
+
+    // Copy bitmap to bytes object
+    int bmp_size = glyph->width * glyph->height;
+    mp_obj_t bmp_bytes = mp_obj_new_bytes(glyph->bitmap, bmp_size);
+
+    mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_bitmap), bmp_bytes);
+    mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_width), mp_obj_new_int(glyph->width));
+    mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_height), mp_obj_new_int(glyph->height));
+    mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_xoff), mp_obj_new_int(glyph->xoff));
+    mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_yoff), mp_obj_new_int(glyph->yoff));
+    mp_obj_dict_store(dict, MP_OBJ_NEW_QSTR(MP_QSTR_advance), mp_obj_new_int(glyph->advance));
+
+    return dict;
+}
+static MP_DEFINE_CONST_FUN_OBJ_3(mod_vibe_ttf_get_glyph_obj, mod_vibe_ttf_get_glyph);
+
+// vibe.ttf_get_metrics(size) -> (ascent, descent, line_gap)
+static mp_obj_t mod_vibe_ttf_get_metrics(mp_obj_t size_obj) {
+    int size = mp_obj_get_int(size_obj);
+    int ascent, descent, line_gap;
+    mp_vibeos_api->ttf_get_metrics(size, &ascent, &descent, &line_gap);
+
+    mp_obj_t tuple[3];
+    tuple[0] = mp_obj_new_int(ascent);
+    tuple[1] = mp_obj_new_int(descent);
+    tuple[2] = mp_obj_new_int(line_gap);
+    return mp_obj_new_tuple(3, tuple);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(mod_vibe_ttf_get_metrics_obj, mod_vibe_ttf_get_metrics);
+
+// vibe.ttf_get_advance(codepoint, size) -> int
+static mp_obj_t mod_vibe_ttf_get_advance(mp_obj_t cp_obj, mp_obj_t size_obj) {
+    int cp = mp_obj_get_int(cp_obj);
+    int size = mp_obj_get_int(size_obj);
+    return mp_obj_new_int(mp_vibeos_api->ttf_get_advance(cp, size));
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(mod_vibe_ttf_get_advance_obj, mod_vibe_ttf_get_advance);
+
+// vibe.ttf_get_kerning(cp1, cp2, size) -> int
+static mp_obj_t mod_vibe_ttf_get_kerning(mp_obj_t cp1_obj, mp_obj_t cp2_obj, mp_obj_t size_obj) {
+    int cp1 = mp_obj_get_int(cp1_obj);
+    int cp2 = mp_obj_get_int(cp2_obj);
+    int size = mp_obj_get_int(size_obj);
+    return mp_obj_new_int(mp_vibeos_api->ttf_get_kerning(cp1, cp2, size));
+}
+static MP_DEFINE_CONST_FUN_OBJ_3(mod_vibe_ttf_get_kerning_obj, mod_vibe_ttf_get_kerning);
+
+// vibe.window_draw_glyph(wid, x, y, bitmap, w, h, fg, bg)
+// Draws a TTF glyph bitmap with alpha blending
+static mp_obj_t mod_vibe_window_draw_glyph(size_t n_args, const mp_obj_t *args) {
+    int wid = mp_obj_get_int(args[0]);
+    int x = mp_obj_get_int(args[1]);
+    int y = mp_obj_get_int(args[2]);
+
+    mp_buffer_info_t bufinfo;
+    mp_get_buffer_raise(args[3], &bufinfo, MP_BUFFER_READ);
+    const uint8_t *bitmap = bufinfo.buf;
+
+    int gw = mp_obj_get_int(args[4]);
+    int gh = mp_obj_get_int(args[5]);
+    uint32_t fg = mp_obj_get_int(args[6]);
+    uint32_t bg = mp_obj_get_int(args[7]);
+
+    int bw, bh;
+    uint32_t *buf = mp_vibeos_api->window_get_buffer(wid, &bw, &bh);
+    if (!buf) return mp_const_none;
+
+    // Extract RGB components
+    uint8_t fg_r = (fg >> 16) & 0xFF;
+    uint8_t fg_g = (fg >> 8) & 0xFF;
+    uint8_t fg_b = fg & 0xFF;
+    uint8_t bg_r = (bg >> 16) & 0xFF;
+    uint8_t bg_g = (bg >> 8) & 0xFF;
+    uint8_t bg_b = bg & 0xFF;
+
+    for (int row = 0; row < gh; row++) {
+        for (int col = 0; col < gw; col++) {
+            int px = x + col;
+            int py = y + row;
+            if (px >= 0 && px < bw && py >= 0 && py < bh) {
+                uint8_t alpha = bitmap[row * gw + col];
+                // Blend: result = fg * alpha + bg * (255 - alpha)
+                uint8_t r = (fg_r * alpha + bg_r * (255 - alpha)) / 255;
+                uint8_t g = (fg_g * alpha + bg_g * (255 - alpha)) / 255;
+                uint8_t b = (fg_b * alpha + bg_b * (255 - alpha)) / 255;
+                buf[py * bw + px] = (r << 16) | (g << 8) | b;
+            }
+        }
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_vibe_window_draw_glyph_obj, 8, 8, mod_vibe_window_draw_glyph);
+
+// ============================================================================
 // Sound
 // ============================================================================
 
@@ -956,6 +1070,19 @@ static const mp_rom_map_elem_t mp_module_vibe_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_window_draw_string), MP_ROM_PTR(&mod_vibe_window_draw_string_obj) },
     { MP_ROM_QSTR(MP_QSTR_window_draw_rect), MP_ROM_PTR(&mod_vibe_window_draw_rect_obj) },
     { MP_ROM_QSTR(MP_QSTR_window_draw_hline), MP_ROM_PTR(&mod_vibe_window_draw_hline_obj) },
+    { MP_ROM_QSTR(MP_QSTR_window_draw_glyph), MP_ROM_PTR(&mod_vibe_window_draw_glyph_obj) },
+
+    // TTF Font Rendering
+    { MP_ROM_QSTR(MP_QSTR_ttf_is_ready), MP_ROM_PTR(&mod_vibe_ttf_is_ready_obj) },
+    { MP_ROM_QSTR(MP_QSTR_ttf_get_glyph), MP_ROM_PTR(&mod_vibe_ttf_get_glyph_obj) },
+    { MP_ROM_QSTR(MP_QSTR_ttf_get_metrics), MP_ROM_PTR(&mod_vibe_ttf_get_metrics_obj) },
+    { MP_ROM_QSTR(MP_QSTR_ttf_get_advance), MP_ROM_PTR(&mod_vibe_ttf_get_advance_obj) },
+    { MP_ROM_QSTR(MP_QSTR_ttf_get_kerning), MP_ROM_PTR(&mod_vibe_ttf_get_kerning_obj) },
+
+    // TTF style constants
+    { MP_ROM_QSTR(MP_QSTR_TTF_NORMAL), MP_ROM_INT(0) },
+    { MP_ROM_QSTR(MP_QSTR_TTF_BOLD), MP_ROM_INT(1) },
+    { MP_ROM_QSTR(MP_QSTR_TTF_ITALIC), MP_ROM_INT(2) },
 
     // Sound
     { MP_ROM_QSTR(MP_QSTR_sound_play), MP_ROM_PTR(&mod_vibe_sound_play_obj) },

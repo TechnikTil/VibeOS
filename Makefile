@@ -66,7 +66,7 @@ HAL_USB_C_SRCS = $(wildcard $(HAL_DIR)/$(HAL_PLATFORM)/usb/*.c)
 # Userspace programs (single-file)
 USER_PROGS = snake tetris desktop calc vibesh echo ls cat pwd mkdir touch rm term uptime sysmon textedit files date play music ping fetch viewer vim led \
              clear yes sleep seq whoami hostname uname which basename dirname \
-             head tail wc df free ps stat grep find hexdump du cp mv kill lscpu lsusb dmesg mousetest readtest vibecode
+             head tail wc df free ps stat grep find hexdump du cp mv kill lscpu lsusb dmesg mousetest readtest vibecode browser
 
 # Object files
 BOOT_OBJ = $(BUILD_DIR)/boot.o
@@ -162,14 +162,6 @@ $(SYSROOT)/bin/%: $(BUILD_DIR)/user/crt0.o $(BUILD_DIR)/user/%.prog.o
 	$(LD) $(USER_LDFLAGS) $^ -o $@
 	@echo "  Built /bin/$*"
 
-# Browser (multi-file)
-$(BUILD_DIR)/user/browser_main.o: $(USER_DIR)/bin/browser/main.c | $(BUILD_DIR)/user
-	$(CC) $(USER_CFLAGS) -I$(USER_DIR)/bin/browser -c $< -o $@
-
-$(SYSROOT)/bin/browser: $(BUILD_DIR)/user/crt0.o $(BUILD_DIR)/user/browser_main.o
-	$(LD) $(USER_LDFLAGS) $^ -o $@
-	@echo "  Built /bin/browser"
-
 # MicroPython (external build)
 $(SYSROOT)/bin/micropython: $(wildcard micropython/ports/vibeos/*.c)
 	@echo "Building MicroPython..."
@@ -189,7 +181,11 @@ $(SYSROOT)/bin/tcc: $(wildcard tinycc/vibeos/*.c) $(wildcard tinycc/vibeos/*.h)
 CRT_FILES = $(BUILD_DIR)/user/crt0.o $(BUILD_DIR)/user/crti.o $(BUILD_DIR)/user/crtn.o
 
 # Build all userspace programs
-USER_BINS = $(patsubst %,$(SYSROOT)/bin/%,$(USER_PROGS)) $(SYSROOT)/bin/browser $(SYSROOT)/bin/micropython $(SYSROOT)/bin/tcc
+USER_BINS = $(patsubst %,$(SYSROOT)/bin/%,$(USER_PROGS)) $(SYSROOT)/bin/micropython $(SYSROOT)/bin/tcc $(SYSROOT)/bin/browser.py
+
+# Copy Python browser script
+$(SYSROOT)/bin/browser.py: $(USER_DIR)/bin/browser.py
+	cp $< $@
 
 user: $(USER_BINS) $(CRT_FILES)
 	@echo ""
