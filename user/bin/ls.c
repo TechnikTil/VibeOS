@@ -6,21 +6,7 @@
 
 #include "../lib/vibe.h"
 
-static kapi_t *api;
-
-// I/O helpers - use stdio hooks if available
-static void out_putc(char c) {
-    if (api->stdio_putc) api->stdio_putc(c);
-    else api->putc(c);
-}
-
-static void out_puts(const char *s) {
-    if (api->stdio_puts) api->stdio_puts(s);
-    else api->puts(s);
-}
-
 int main(kapi_t *k, int argc, char **argv) {
-    api = k;
     const char *path = ".";
 
     if (argc > 1) {
@@ -29,16 +15,16 @@ int main(kapi_t *k, int argc, char **argv) {
 
     void *dir = k->open(path);
     if (!dir) {
-        out_puts("ls: ");
-        out_puts(path);
-        out_puts(": No such file or directory\n");
+        vibe_puts(k, "ls: ");
+        vibe_puts(k, path);
+        vibe_puts(k, ": No such file or directory\n");
         return 1;
     }
 
     if (!k->is_dir(dir)) {
         // It's a file, just print the name
-        out_puts(path);
-        out_putc('\n');
+        vibe_puts(k, path);
+        vibe_putc(k, '\n');
         return 0;
     }
 
@@ -48,12 +34,12 @@ int main(kapi_t *k, int argc, char **argv) {
     int index = 0;
 
     while (k->readdir(dir, index, name, sizeof(name), &type) >= 0) {
-        out_puts(name);
+        vibe_puts(k, name);
         if (type == 2) {
             // Directory
-            out_putc('/');
+            vibe_putc(k, '/');
         }
-        out_putc('\n');
+        vibe_putc(k, '\n');
         index++;
     }
 

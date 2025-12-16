@@ -397,4 +397,105 @@ static inline int isprint(int c) {
     return c >= 32 && c < 127;
 }
 
+// ============ Smart I/O Helpers ============
+// These automatically use stdio hooks when available (for terminal emulator)
+// Otherwise fall back to console I/O
+
+// Print a character - uses stdio hooks if set, else console
+static inline void vibe_putc(kapi_t *k, char c) {
+    if (k->stdio_putc) k->stdio_putc(c);
+    else k->putc(c);
+}
+
+// Print a string - uses stdio hooks if set, else console
+static inline void vibe_puts(kapi_t *k, const char *s) {
+    if (k->stdio_puts) k->stdio_puts(s);
+    else k->puts(s);
+}
+
+// Read a character - uses stdio hooks if set, else console
+static inline int vibe_getc(kapi_t *k) {
+    if (k->stdio_getc) return k->stdio_getc();
+    else return k->getc();
+}
+
+// Check if key available - uses stdio hooks if set, else console
+static inline int vibe_has_key(kapi_t *k) {
+    if (k->stdio_has_key) return k->stdio_has_key();
+    else return k->has_key();
+}
+
+// Print an integer (decimal)
+static inline void vibe_print_int(kapi_t *k, int n) {
+    if (n < 0) {
+        vibe_putc(k, '-');
+        n = -n;
+    }
+    if (n == 0) {
+        vibe_putc(k, '0');
+        return;
+    }
+    char buf[12];
+    int i = 0;
+    while (n > 0) {
+        buf[i++] = '0' + (n % 10);
+        n /= 10;
+    }
+    while (i > 0) {
+        vibe_putc(k, buf[--i]);
+    }
+}
+
+// Print an unsigned integer (decimal)
+static inline void vibe_print_uint(kapi_t *k, unsigned int n) {
+    if (n == 0) {
+        vibe_putc(k, '0');
+        return;
+    }
+    char buf[12];
+    int i = 0;
+    while (n > 0) {
+        buf[i++] = '0' + (n % 10);
+        n /= 10;
+    }
+    while (i > 0) {
+        vibe_putc(k, buf[--i]);
+    }
+}
+
+// Print a hex number (no 0x prefix)
+static inline void vibe_print_hex(kapi_t *k, uint32_t n) {
+    if (n == 0) {
+        vibe_putc(k, '0');
+        return;
+    }
+    char buf[9];
+    int i = 0;
+    while (n > 0) {
+        int digit = n & 0xF;
+        buf[i++] = digit < 10 ? '0' + digit : 'a' + digit - 10;
+        n >>= 4;
+    }
+    while (i > 0) {
+        vibe_putc(k, buf[--i]);
+    }
+}
+
+// Print size in human-readable format (KB, MB, GB)
+static inline void vibe_print_size(kapi_t *k, uint64_t bytes) {
+    if (bytes < 1024) {
+        vibe_print_uint(k, (unsigned int)bytes);
+        vibe_puts(k, " B");
+    } else if (bytes < 1024 * 1024) {
+        vibe_print_uint(k, (unsigned int)(bytes / 1024));
+        vibe_puts(k, " KB");
+    } else if (bytes < 1024ULL * 1024 * 1024) {
+        vibe_print_uint(k, (unsigned int)(bytes / (1024 * 1024)));
+        vibe_puts(k, " MB");
+    } else {
+        vibe_print_uint(k, (unsigned int)(bytes / (1024ULL * 1024 * 1024)));
+        vibe_puts(k, " GB");
+    }
+}
+
 #endif
