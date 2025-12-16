@@ -25,6 +25,6 @@ while True:
     if buttons & 1:  # Left button
         vibe.fill_rect(mx - 5, my - 5, 10, 10, colors[color_idx])
 
-    vibe.yield()
+    vibe.sched_yield()
 
 vibe.clear()

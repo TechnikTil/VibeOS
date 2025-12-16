@@ -58,12 +58,12 @@ static mp_obj_t mod_vibe_getc(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mod_vibe_getc_obj, mod_vibe_getc);
 
-// vibe.yield()
-static mp_obj_t mod_vibe_yield(void) {
+// vibe.sched_yield() - renamed from yield because 'yield' is a Python keyword
+static mp_obj_t mod_vibe_sched_yield(void) {
     mp_vibeos_api->yield();
     return mp_const_none;
 }
-static MP_DEFINE_CONST_FUN_OBJ_0(mod_vibe_yield_obj, mod_vibe_yield);
+static MP_DEFINE_CONST_FUN_OBJ_0(mod_vibe_sched_yield_obj, mod_vibe_sched_yield);
 
 // --- Graphics ---
 
@@ -160,7 +160,7 @@ static const mp_rom_map_elem_t mp_module_vibe_globals_table[] = {
     // Timing
     { MP_ROM_QSTR(MP_QSTR_sleep_ms), MP_ROM_PTR(&mod_vibe_sleep_ms_obj) },
     { MP_ROM_QSTR(MP_QSTR_uptime_ms), MP_ROM_PTR(&mod_vibe_uptime_ms_obj) },
-    { MP_ROM_QSTR(MP_QSTR_yield), MP_ROM_PTR(&mod_vibe_yield_obj) },
+    { MP_ROM_QSTR(MP_QSTR_sched_yield), MP_ROM_PTR(&mod_vibe_sched_yield_obj) },
 
     // Graphics
     { MP_ROM_QSTR(MP_QSTR_put_pixel), MP_ROM_PTR(&mod_vibe_put_pixel_obj) },

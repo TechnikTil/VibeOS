@@ -20,7 +20,7 @@ vibe.draw_string(400, 420, "Press any key to exit", vibe.CYAN, vibe.BLUE)
 
 # Wait for key
 while not vibe.has_key():
-    vibe.yield()
+    vibe.sched_yield()
 
 vibe.getc()
 vibe.clear()

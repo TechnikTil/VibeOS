@@ -195,7 +195,8 @@ $(USER_BUILD_DIR)/browser_main.o: $(USER_DIR)/bin/browser/main.c $(USER_DIR)/bin
 
 # MicroPython - uses its own build system in micropython/ports/vibeos/
 # This rule builds MicroPython using its Makefile and copies the result
-$(USER_BUILD_DIR)/micropython.elf: | $(USER_BUILD_DIR)
+MICROPYTHON_SRCS = $(wildcard micropython/ports/vibeos/*.c) $(wildcard micropython/ports/vibeos/*.h)
+$(USER_BUILD_DIR)/micropython.elf: $(MICROPYTHON_SRCS) | $(USER_BUILD_DIR)
 	@echo "Building MicroPython..."
 	$(MAKE) -C micropython/ports/vibeos
 	cp micropython/ports/vibeos/build/micropython.elf $@

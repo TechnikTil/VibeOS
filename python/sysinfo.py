@@ -32,5 +32,5 @@ vibe.set_color(vibe.WHITE, vibe.BLACK)
 vibe.puts("\nPress any key to exit...\n")
 
 while not vibe.has_key():
-    vibe.yield()
+    vibe.sched_yield()
 vibe.getc()
