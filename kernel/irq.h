@@ -24,7 +24,7 @@ void irq_register_handler(uint32_t irq, irq_handler_t handler);
 
 // Called from vectors.S
 void handle_irq(void);
-void handle_sync_exception(uint64_t esr, uint64_t elr, uint64_t far);
+void handle_sync_exception(uint64_t esr, uint64_t elr, uint64_t far, uint64_t *regs);
 void handle_fiq(void);
 void handle_serror(uint64_t esr);
 

@@ -944,3 +944,152 @@ doom -iwad /games/doom1.wad
 3. **FAT32 rename** - Expects just filename, not full path
 4. **doomgeneric is clean** - Only 6 functions needed, rest is portable C code
 5. **Pi USB mouse** - Works via USB HID polling, same delta approach works
+
+---
+
+## Session 43: White Screen of Death (WSOD) Panic Handler
+
+**Date**: December 16, 2024
+
+Built a beautiful panic screen for kernel crashes - the "White Screen of Death" (WSOD).
+
+### Design Philosophy
+
+- **1-bit aesthetic** - White background, black text (matches System 7 style)
+- **Useful debug info** - Not just "crash", but WHERE and WHY
+- **Personality** - Random quotes, ASCII art, dramatic EKG flatline animation
+
+### Features Implemented
+
+1. **Tombstone ASCII Art**
+   ```
+             _______
+            /       \
+           /   RIP   \
+          |           |
+          |   VIBES   |
+          |    NOT    |
+          | IMMACULATE|
+          |           |
+          |  ~~~~~~~  |
+          |___________|
+         /=============\
+   ```
+
+2. **Sad Mac Icon**
+   - Classic Macintosh crash icon (32x32 bitmap, drawn at 2x)
+   - X eyes and frown (not a happy mac!)
+
+3. **Animated EKG Flatline**
+   - Two heartbeats then flatline across the screen
+   - P wave, QRS complex, T wave pattern
+   - Dramatic pause before flatline
+   - ~3 seconds of animation before system halts
+
+4. **Debug Information**
+   - Exception type decoded (Data Abort, Instruction Abort, etc.)
+   - Fault status decoded (Translation Fault L0/L1/L2/L3, Permission Fault, etc.)
+   - Fault address (FAR) and return address (ELR)
+   - Read vs Write indicator for memory faults
+   - Register dump (x0-x7, SP, FP, LR)
+   - Uptime at crash
+   - Process name (if crashed in userspace)
+
+5. **Stack Backtrace with Offsets**
+   - Walks frame pointer chain
+   - Shows return addresses with location info
+   - For processes: `processname +0xOFFSET`
+   - For kernel: `kernel +0xOFFSET`
+   - Offsets can be looked up with `aarch64-elf-nm kernel.elf`
+
+6. **Random Quotes**
+   - 15 quotes from Einstein, Stalin, Jobs, Edison, etc.
+   - Uses ARM system counter for randomness
+   - Including: "The vibes were, in fact, not immaculate." - VibeOS
+
+7. **Dual Output**
+   - Always prints to UART (serial debug)
+   - Draws full WSOD on screen if framebuffer available
+
+### Test Program
+
+Created `/bin/explode` - counts down from 3000ms then crashes via null pointer dereference.
+
+### Platform Compatibility
+
+**Pi hardware scroll fix:**
+- Pi uses hardware scrolling for the console
+- Must reset scroll offset to 0 before drawing WSOD
+- Added `hal_fb_set_scroll_offset(0)` call
+
+**Memory range detection for backtrace:**
+- QEMU RAM: 0x40000000 - 0x50000000
+- Pi RAM: 0x00080000 - 0x20000000
+- Checks both ranges for valid frame pointers
+
+**Kernel base address:**
+- Added `_kernel_start` symbol to linker scripts
+- QEMU: 0x0 (flash)
+- Pi: 0x80000 (RAM)
+- Used to calculate correct kernel offsets in backtrace
+
+### Exception Decoding
+
+**Exception Classes (ESR.EC):**
+- 0x00: Unknown
+- 0x15: SVC (Syscall)
+- 0x20: Instruction Abort (Lower EL)
+- 0x21: Instruction Abort
+- 0x24: Data Abort (Lower EL)
+- 0x25: Data Abort
+- 0x26: SP Alignment Fault
+- 0x2C: FP Exception
+
+**Fault Status Codes (DFSC/IFSC):**
+- 0x04-0x07: Translation Fault L0-L3
+- 0x09-0x0B: Access Flag Fault L1-L3
+- 0x0D-0x0F: Permission Fault L1-L3
+- 0x10: Synchronous External Abort
+- 0x21: Alignment Fault
+
+### Files Created
+- `user/bin/explode.c` - Crash test program
+
+### Files Modified
+- `kernel/irq.c` - Complete WSOD implementation (~300 lines added)
+- `kernel/irq.h` - Updated `handle_sync_exception` signature to receive registers
+- `kernel/vectors.S` - Pass saved register pointer to C handler
+- `kernel/process.h` - Added `extern process_t *current_process`
+- `linker.ld` - Added `_kernel_start = 0x0` symbol
+- `linker-pi.ld` - Added `_kernel_start = 0x80000` symbol
+- `Makefile` - Added explode to USER_PROGS
+
+### Sample Output (UART)
+
+```
+========================================
+  KERNEL PANIC: Data Abort (Lower EL)
+========================================
+  Fault Address:  0x0
+  Return Address: 0x5AF2000C
+  ESR:            0x96000004
+  Access Type:    Write
+  Process:        /bin/explode
+  Registers:
+    x0: 0x0
+    x1: 0xDEAD
+    ...
+    FP:  0x4FFFFD80
+    LR:  0x5AF20008
+  Backtrace:
+    [0] 0x5AF2000C (/bin/explode +0xC)
+    [1] 0x13C34 (kernel +0x13C34)
+========================================
+```
+
+### Lessons Learned
+1. **Sad Mac vs Happy Mac** - X eyes and frown, not smile!
+2. **Pi hardware scroll** - Must reset before drawing full-screen graphics
+3. **Memory ranges differ** - QEMU uses high addresses, Pi uses low addresses
+4. **Kernel base differs** - QEMU at 0x0 (flash), Pi at 0x80000 (RAM)
+5. **Linker symbols** - Can define constants in linker script for platform detection

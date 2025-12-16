@@ -22,6 +22,9 @@ MEMORY
 
 SECTIONS
 {
+    /* Kernel base address for debug info */
+    _kernel_start = 0x00080000;
+
     /* Boot code first */
     .text.boot : {
         *(.text.boot)

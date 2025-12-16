@@ -140,6 +140,7 @@ sync_handler:
     mrs     x0, esr_el1     // Exception Syndrome Register
     mrs     x1, elr_el1     // Exception Link Register (return address)
     mrs     x2, far_el1     // Fault Address Register
+    mov     x3, sp          // Pointer to saved registers on stack
 
     // Call C handler
     bl      handle_sync_exception

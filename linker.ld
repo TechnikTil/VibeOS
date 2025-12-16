@@ -23,6 +23,9 @@ MEMORY
 
 SECTIONS
 {
+    /* Kernel base address for debug info */
+    _kernel_start = 0x00000000;
+
     /* Boot code at start of flash */
     .text.boot : {
         *(.text.boot)
