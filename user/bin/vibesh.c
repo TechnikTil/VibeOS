@@ -465,6 +465,7 @@ static void builtin_help(void) {
     sh_puts("  exit        Exit shell\n");
     sh_puts("  clear       Clear screen\n");
     sh_puts("  time <cmd>  Time command execution\n");
+    sh_puts("  mpy [file]  Run MicroPython (REPL or script)\n");
     sh_puts("  help        Show this help\n");
     sh_puts("\nLine editing:\n");
     sh_puts("  Up/Down     Browse command history\n");
@@ -480,6 +481,14 @@ static void builtin_help(void) {
 }
 
 // ============ Command Execution ============
+
+// Check if string ends with suffix
+static int ends_with(const char *str, const char *suffix) {
+    int str_len = strlen(str);
+    int suf_len = strlen(suffix);
+    if (suf_len > str_len) return 0;
+    return strcmp(str + str_len - suf_len, suffix) == 0;
+}
 
 static int exec_external(int argc, char *argv[]) {
     char path[PATH_MAX];
@@ -498,6 +507,16 @@ static int exec_external(int argc, char *argv[]) {
         sh_puts(": command not found\n");
         sh_set_color(COLOR_WHITE, COLOR_BLACK);
         return 127;
+    }
+
+    // Auto-detect .py files and run with micropython
+    if (ends_with(path, ".py")) {
+        char *new_argv[MAX_ARGS + 1];
+        new_argv[0] = "/bin/micropython";
+        for (int i = 0; i < argc && i < MAX_ARGS; i++) {
+            new_argv[i + 1] = argv[i];
+        }
+        return k->exec_args("/bin/micropython", argc + 1, new_argv);
     }
 
     int result = k->exec_args(path, argc, argv);
@@ -548,6 +567,13 @@ static int execute_command(char *cmd) {
     if (strcmp(argv[0], "clear") == 0) {
         sh_clear();
         return 0;
+    }
+
+    // mpy - alias for micropython
+    if (strcmp(argv[0], "mpy") == 0) {
+        // Rewrite argv to use /bin/micropython
+        argv[0] = "/bin/micropython";
+        return k->exec_args("/bin/micropython", argc, argv);
     }
 
     // time <command> - measure execution time

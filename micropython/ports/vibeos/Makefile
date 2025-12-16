@@ -38,6 +38,9 @@ CFLAGS += -include stddef.h -include stdint.h -include string.h -include errno.h
 LDFLAGS += -nostdlib -pie -T ../../../user/linker.ld
 LDFLAGS += --gc-sections
 
+# Find libgcc for soft-float support
+LIBGCC := $(shell $(CC) -print-libgcc-file-name)
+
 # Source files
 SRC_C = \
 	main.c \
@@ -73,7 +76,7 @@ $(BUILD)/%.o: %.S | $(BUILD)
 
 $(BUILD)/micropython.elf: $(CRT0_OBJ) $(OBJ)
 	$(ECHO) "LINK $@"
-	$(Q)$(LD) $(LDFLAGS) -o $@ $^
+	$(Q)$(LD) $(LDFLAGS) -o $@ $^ $(LIBGCC)
 	$(Q)$(SIZE) $@
 
 include $(TOP)/py/mkrules.mk

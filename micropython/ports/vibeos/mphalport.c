@@ -133,6 +133,9 @@ mp_uint_t mp_hal_stdout_tx_strn(const char *str, mp_uint_t len) {
     return len;
 }
 
+// Note: mp_hal_stdout_tx_strn_cooked is provided by shared/runtime/stdout_helpers.c
+// It uses mp_hal_stdout_tx_strn which we define above with stdio hook support
+
 // Milliseconds since boot
 mp_uint_t mp_hal_ticks_ms(void) {
     // VibeOS ticks at 100Hz, so multiply by 10 to get ms

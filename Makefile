@@ -221,6 +221,12 @@ install-user: user $(DISK_IMG)
 	@if [ -f duck.jpg ]; then cp duck.jpg /tmp/vibeos_mount/duck.jpg && echo "  Installed /duck.jpg"; fi
 	@if [ -f duck.bmp ]; then cp duck.bmp /tmp/vibeos_mount/duck.bmp && echo "  Installed /duck.bmp"; fi
 	@if [ -d python ]; then mkdir -p /tmp/vibeos_mount/python && cp python/*.py /tmp/vibeos_mount/python/ && echo "  Installed /python/*.py"; fi
+	@if [ -d scripts ]; then \
+		mkdir -p /tmp/vibeos_mount/home/user; \
+		for f in scripts/*.py; do [ -f "$$f" ] && cp "$$f" /tmp/vibeos_mount/home/user/; done; \
+		for f in scripts/*.md; do [ -f "$$f" ] && cp "$$f" /tmp/vibeos_mount/home/user/; done; \
+		echo "  Installed /home/user scripts"; \
+	fi
 	@dot_clean /tmp/vibeos_mount 2>/dev/null || true
 	@find /tmp/vibeos_mount -name '._*' -delete 2>/dev/null || true
 	@find /tmp/vibeos_mount -name '.DS_Store' -delete 2>/dev/null || true

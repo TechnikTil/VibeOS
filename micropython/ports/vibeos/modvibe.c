@@ -465,6 +465,173 @@ static mp_obj_t mod_vibe_window_size(mp_obj_t wid_obj) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(mod_vibe_window_size_obj, mod_vibe_window_size);
 
+// vibe.window_fill_rect(wid, x, y, w, h, color)
+static mp_obj_t mod_vibe_window_fill_rect(size_t n_args, const mp_obj_t *args) {
+    int wid = mp_obj_get_int(args[0]);
+    int x = mp_obj_get_int(args[1]);
+    int y = mp_obj_get_int(args[2]);
+    int w = mp_obj_get_int(args[3]);
+    int h = mp_obj_get_int(args[4]);
+    uint32_t color = mp_obj_get_int(args[5]);
+
+    int bw, bh;
+    uint32_t *buf = mp_vibeos_api->window_get_buffer(wid, &bw, &bh);
+    if (!buf) return mp_const_none;
+
+    // Clip to bounds
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > bw) w = bw - x;
+    if (y + h > bh) h = bh - y;
+    if (w <= 0 || h <= 0) return mp_const_none;
+
+    for (int py = y; py < y + h; py++) {
+        for (int px = x; px < x + w; px++) {
+            buf[py * bw + px] = color;
+        }
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_vibe_window_fill_rect_obj, 6, 6, mod_vibe_window_fill_rect);
+
+// vibe.window_put_pixel(wid, x, y, color)
+static mp_obj_t mod_vibe_window_put_pixel(size_t n_args, const mp_obj_t *args) {
+    int wid = mp_obj_get_int(args[0]);
+    int x = mp_obj_get_int(args[1]);
+    int y = mp_obj_get_int(args[2]);
+    uint32_t color = mp_obj_get_int(args[3]);
+
+    int bw, bh;
+    uint32_t *buf = mp_vibeos_api->window_get_buffer(wid, &bw, &bh);
+    if (!buf) return mp_const_none;
+
+    if (x >= 0 && x < bw && y >= 0 && y < bh) {
+        buf[y * bw + x] = color;
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_vibe_window_put_pixel_obj, 4, 4, mod_vibe_window_put_pixel);
+
+// vibe.window_draw_char(wid, x, y, char, fg, bg)
+static mp_obj_t mod_vibe_window_draw_char(size_t n_args, const mp_obj_t *args) {
+    int wid = mp_obj_get_int(args[0]);
+    int x = mp_obj_get_int(args[1]);
+    int y = mp_obj_get_int(args[2]);
+    int c = mp_obj_get_int(args[3]);
+    uint32_t fg = mp_obj_get_int(args[4]);
+    uint32_t bg = mp_obj_get_int(args[5]);
+
+    int bw, bh;
+    uint32_t *buf = mp_vibeos_api->window_get_buffer(wid, &bw, &bh);
+    if (!buf) return mp_const_none;
+
+    const uint8_t *font = mp_vibeos_api->font_data;
+    const uint8_t *glyph = &font[(unsigned char)c * 16];
+
+    for (int row = 0; row < 16; row++) {
+        for (int col = 0; col < 8; col++) {
+            uint32_t color = (glyph[row] & (0x80 >> col)) ? fg : bg;
+            int px = x + col;
+            int py = y + row;
+            if (px >= 0 && px < bw && py >= 0 && py < bh) {
+                buf[py * bw + px] = color;
+            }
+        }
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_vibe_window_draw_char_obj, 6, 6, mod_vibe_window_draw_char);
+
+// vibe.window_draw_string(wid, x, y, str, fg, bg)
+static mp_obj_t mod_vibe_window_draw_string(size_t n_args, const mp_obj_t *args) {
+    int wid = mp_obj_get_int(args[0]);
+    int x = mp_obj_get_int(args[1]);
+    int y = mp_obj_get_int(args[2]);
+    const char *s = mp_obj_str_get_str(args[3]);
+    uint32_t fg = mp_obj_get_int(args[4]);
+    uint32_t bg = mp_obj_get_int(args[5]);
+
+    int bw, bh;
+    uint32_t *buf = mp_vibeos_api->window_get_buffer(wid, &bw, &bh);
+    if (!buf) return mp_const_none;
+
+    const uint8_t *font = mp_vibeos_api->font_data;
+    int cx = x;
+
+    while (*s) {
+        const uint8_t *glyph = &font[(unsigned char)*s * 16];
+        for (int row = 0; row < 16; row++) {
+            for (int col = 0; col < 8; col++) {
+                uint32_t color = (glyph[row] & (0x80 >> col)) ? fg : bg;
+                int px = cx + col;
+                int py = y + row;
+                if (px >= 0 && px < bw && py >= 0 && py < bh) {
+                    buf[py * bw + px] = color;
+                }
+            }
+        }
+        cx += 8;
+        s++;
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_vibe_window_draw_string_obj, 6, 6, mod_vibe_window_draw_string);
+
+// vibe.window_draw_rect(wid, x, y, w, h, color) - outline only
+static mp_obj_t mod_vibe_window_draw_rect(size_t n_args, const mp_obj_t *args) {
+    int wid = mp_obj_get_int(args[0]);
+    int x = mp_obj_get_int(args[1]);
+    int y = mp_obj_get_int(args[2]);
+    int w = mp_obj_get_int(args[3]);
+    int h = mp_obj_get_int(args[4]);
+    uint32_t color = mp_obj_get_int(args[5]);
+
+    int bw, bh;
+    uint32_t *buf = mp_vibeos_api->window_get_buffer(wid, &bw, &bh);
+    if (!buf) return mp_const_none;
+
+    // Draw horizontal lines (top and bottom)
+    for (int px = x; px < x + w; px++) {
+        if (px >= 0 && px < bw) {
+            if (y >= 0 && y < bh) buf[y * bw + px] = color;
+            if (y + h - 1 >= 0 && y + h - 1 < bh) buf[(y + h - 1) * bw + px] = color;
+        }
+    }
+    // Draw vertical lines (left and right)
+    for (int py = y; py < y + h; py++) {
+        if (py >= 0 && py < bh) {
+            if (x >= 0 && x < bw) buf[py * bw + x] = color;
+            if (x + w - 1 >= 0 && x + w - 1 < bw) buf[py * bw + x + w - 1] = color;
+        }
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_vibe_window_draw_rect_obj, 6, 6, mod_vibe_window_draw_rect);
+
+// vibe.window_draw_hline(wid, x, y, w, color)
+static mp_obj_t mod_vibe_window_draw_hline(size_t n_args, const mp_obj_t *args) {
+    int wid = mp_obj_get_int(args[0]);
+    int x = mp_obj_get_int(args[1]);
+    int y = mp_obj_get_int(args[2]);
+    int w = mp_obj_get_int(args[3]);
+    uint32_t color = mp_obj_get_int(args[4]);
+
+    int bw, bh;
+    uint32_t *buf = mp_vibeos_api->window_get_buffer(wid, &bw, &bh);
+    if (!buf) return mp_const_none;
+
+    if (y < 0 || y >= bh) return mp_const_none;
+    if (x < 0) { w += x; x = 0; }
+    if (x + w > bw) w = bw - x;
+    if (w <= 0) return mp_const_none;
+
+    for (int px = x; px < x + w; px++) {
+        buf[y * bw + px] = color;
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mod_vibe_window_draw_hline_obj, 5, 5, mod_vibe_window_draw_hline);
+
 // ============================================================================
 // Sound
 // ============================================================================
@@ -783,6 +950,12 @@ static const mp_rom_map_elem_t mp_module_vibe_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_window_invalidate), MP_ROM_PTR(&mod_vibe_window_invalidate_obj) },
     { MP_ROM_QSTR(MP_QSTR_window_set_title), MP_ROM_PTR(&mod_vibe_window_set_title_obj) },
     { MP_ROM_QSTR(MP_QSTR_window_size), MP_ROM_PTR(&mod_vibe_window_size_obj) },
+    { MP_ROM_QSTR(MP_QSTR_window_fill_rect), MP_ROM_PTR(&mod_vibe_window_fill_rect_obj) },
+    { MP_ROM_QSTR(MP_QSTR_window_put_pixel), MP_ROM_PTR(&mod_vibe_window_put_pixel_obj) },
+    { MP_ROM_QSTR(MP_QSTR_window_draw_char), MP_ROM_PTR(&mod_vibe_window_draw_char_obj) },
+    { MP_ROM_QSTR(MP_QSTR_window_draw_string), MP_ROM_PTR(&mod_vibe_window_draw_string_obj) },
+    { MP_ROM_QSTR(MP_QSTR_window_draw_rect), MP_ROM_PTR(&mod_vibe_window_draw_rect_obj) },
+    { MP_ROM_QSTR(MP_QSTR_window_draw_hline), MP_ROM_PTR(&mod_vibe_window_draw_hline_obj) },
 
     // Sound
     { MP_ROM_QSTR(MP_QSTR_sound_play), MP_ROM_PTR(&mod_vibe_sound_play_obj) },

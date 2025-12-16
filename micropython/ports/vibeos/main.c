@@ -157,6 +157,13 @@ int main(kapi_t *api, int argc, char **argv) {
     gc_init(heap, heap + sizeof(heap));
     mp_init();
 
+    // Populate sys.argv with command line arguments
+    #if MICROPY_PY_SYS_ARGV
+    for (int i = 0; i < argc; i++) {
+        mp_obj_list_append(mp_sys_argv, mp_obj_new_str(argv[i], strlen(argv[i])));
+    }
+    #endif
+
     int ret = 0;
 
     if (argc > 1) {

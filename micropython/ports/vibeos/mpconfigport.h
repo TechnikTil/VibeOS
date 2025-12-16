@@ -1,10 +1,10 @@
 // MicroPython port configuration for VibeOS
-// MINIMAL configuration - no floats, no extra modules
+// Full features enabled with double-precision floats
 
 #include <stdint.h>
 
-// Use minimal ROM level
-#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_MINIMUM)
+// Use full features ROM level (maximum Python compatibility)
+#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_FULL_FEATURES)
 
 // Core features
 #define MICROPY_ENABLE_COMPILER           (1)
@@ -36,7 +36,7 @@
 #define MICROPY_PY_SYS_MODULES            (0)
 #define MICROPY_PY_SYS_EXIT               (1)
 #define MICROPY_PY_SYS_PATH               (0)
-#define MICROPY_PY_SYS_ARGV               (0)
+#define MICROPY_PY_SYS_ARGV               (1)
 #define MICROPY_PY_SYS_PS1_PS2            (1)
 #define MICROPY_PY_SYS_STDIO_BUFFER       (0)
 #define MICROPY_PY_OS                     (0)
@@ -47,8 +47,8 @@
 #define MICROPY_PY_MACHINE                (0)
 #define MICROPY_PY_NETWORK                (0)
 
-// NO floats - avoids libgcc soft float dependencies
-#define MICROPY_FLOAT_IMPL                (MICROPY_FLOAT_IMPL_NONE)
+// Enable double-precision floats (we have FPU enabled)
+#define MICROPY_FLOAT_IMPL                (MICROPY_FLOAT_IMPL_DOUBLE)
 #define MICROPY_LONGINT_IMPL              (MICROPY_LONGINT_IMPL_MPZ)
 
 // Memory

@@ -8,6 +8,7 @@
 // Console I/O
 int mp_hal_stdin_rx_chr(void);
 mp_uint_t mp_hal_stdout_tx_strn(const char *str, mp_uint_t len);
+// mp_hal_stdout_tx_strn_cooked provided by shared/runtime/stdout_helpers.c
 
 // Timing
 mp_uint_t mp_hal_ticks_ms(void);
