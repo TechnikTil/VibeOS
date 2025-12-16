@@ -19,6 +19,8 @@ include $(TOP)/py/py.mk
 INC += -I.
 INC += -I$(TOP)
 INC += -I$(BUILD)
+INC += -I$(TOP)/extmod
+INC += -I$(TOP)/lib
 INC += -I../../../user/lib
 INC += -I../../../kernel/libc
 
@@ -30,9 +32,9 @@ CFLAGS += -Wall -std=gnu99
 CFLAGS += -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers
 CFLAGS += -Wno-implicit-function-declaration -Wno-pointer-to-int-cast -Wno-int-to-pointer-cast
 CFLAGS += -Wno-int-conversion
-CFLAGS += -Os -DNDEBUG
+CFLAGS += -O0 -DNDEBUG -DMP_FALLTHROUGH=
 CFLAGS += -fdata-sections -ffunction-sections
-CFLAGS += -include stddef.h -include stdint.h -include string.h -include errno.h -include stdio.h -include setjmp.h
+CFLAGS += -include stddef.h -include stdint.h -include stdbool.h -include string.h -include errno.h -include stdio.h -include setjmp.h -include math.h
 
 # Linker flags
 LDFLAGS += -nostdlib -pie -T ../../../user/linker.ld
@@ -52,7 +54,15 @@ SRC_C = \
 	shared/runtime/stdout_helpers.c \
 	shared/runtime/gchelper_generic.c \
 
-SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c modvibe.c
+# Extended modules (json, random, heapq, re)
+# Note: modre.c #includes the re1.5 .c files directly
+SRC_EXTMOD_C = \
+	extmod/modjson.c \
+	extmod/modrandom.c \
+	extmod/modheapq.c \
+	extmod/modre.c \
+
+SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c modvibe.c $(SRC_EXTMOD_C)
 
 # Assembly sources
 SRC_S = setjmp.S
@@ -63,6 +73,7 @@ CRT0_OBJ = $(BUILD)/crt0.o
 
 OBJ += $(PY_CORE_O)
 OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
+OBJ += $(addprefix $(BUILD)/, $(SRC_EXTMOD_C:.c=.o))
 OBJ += $(addprefix $(BUILD)/, $(SRC_S:.S=.o))
 
 all: $(BUILD)/micropython.elf

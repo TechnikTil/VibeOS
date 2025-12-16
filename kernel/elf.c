@@ -153,8 +153,9 @@ static void elf_process_relocations(uint64_t load_base, const Elf64_Dyn *dynamic
     const Elf64_Rela *rela = (const Elf64_Rela *)(load_base + rela_addr);
     int num_relas = rela_size / rela_ent;
 
-    printf("[ELF] Processing %d relocations at 0x%lx\n", num_relas, load_base + rela_addr);
+    printf("[ELF] Processing %d relocations at 0x%lx (rela_addr=0x%lx)\n", num_relas, load_base + rela_addr, rela_addr);
 
+    int applied = 0;
     for (int i = 0; i < num_relas; i++) {
         uint64_t offset = rela[i].r_offset;
         uint64_t type = rela[i].r_info & 0xFFFFFFFF;
@@ -164,12 +165,18 @@ static void elf_process_relocations(uint64_t load_base, const Elf64_Dyn *dynamic
             // R_AARCH64_RELATIVE: *(load_base + offset) = load_base + addend
             uint64_t *target = (uint64_t *)(load_base + offset);
             *target = load_base + addend;
+            applied++;
+            // Debug first and last few
+            if (i < 3 || i >= num_relas - 3) {
+                printf("[ELF] Reloc %d: offset=0x%lx target=0x%lx value=0x%lx\n",
+                       i, offset, (uint64_t)target, *target);
+            }
         } else {
             printf("[ELF] Unknown relocation type 0x%lx at offset 0x%lx\n", type, offset);
         }
     }
 
-    printf("[ELF] Relocations applied successfully\n");
+    printf("[ELF] Applied %d relocations successfully\n", applied);
 }
 
 // Load ELF at a specific base address

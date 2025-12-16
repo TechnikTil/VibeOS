@@ -13,23 +13,23 @@
 #define MICROPY_REPL_AUTO_INDENT          (1)
 #define MICROPY_ENABLE_EXTERNAL_IMPORT    (0)
 
-// Disable ALL optional modules
-#define MICROPY_PY_JSON                   (0)
-#define MICROPY_PY_RE                     (0)
-#define MICROPY_PY_RANDOM                 (0)
-#define MICROPY_PY_MATH                   (0)
-#define MICROPY_PY_CMATH                  (0)
-#define MICROPY_PY_STRUCT                 (0)
-#define MICROPY_PY_BINASCII               (0)
-#define MICROPY_PY_HEAPQ                  (0)
-#define MICROPY_PY_COLLECTIONS            (0)
-#define MICROPY_PY_HASHLIB                (0)
-#define MICROPY_PY_PLATFORM               (0)
-#define MICROPY_PY_TIME                   (0)
-#define MICROPY_PY_DEFLATE                (0)
-#define MICROPY_PY_FRAMEBUF               (0)
-#define MICROPY_PY_UCTYPES                (0)
-#define MICROPY_PY_ASYNCIO                (0)
+// Standard library modules - enable useful ones for app development
+#define MICROPY_PY_JSON                   (1)  // JSON parsing - essential for web
+#define MICROPY_PY_RE                     (1)  // Regex
+#define MICROPY_PY_RANDOM                 (1)  // Random numbers
+#define MICROPY_PY_MATH                   (1)  // Math functions (sin, cos, sqrt, etc.)
+#define MICROPY_PY_CMATH                  (0)  // Complex math - not needed
+#define MICROPY_PY_STRUCT                 (1)  // Binary data packing/unpacking
+#define MICROPY_PY_BINASCII               (0)  // Base64 - needs lib/uzlib
+#define MICROPY_PY_HEAPQ                  (1)  // Priority queues
+#define MICROPY_PY_COLLECTIONS            (1)  // OrderedDict, deque, namedtuple
+#define MICROPY_PY_HASHLIB                (0)  // Hashing - needs lib/crypto-algorithms
+#define MICROPY_PY_PLATFORM               (0)  // Platform info - not useful
+#define MICROPY_PY_TIME                   (0)  // Time - we have vibe.datetime()
+#define MICROPY_PY_DEFLATE                (0)  // Compression - needs lib/uzlib
+#define MICROPY_PY_FRAMEBUF               (0)  // Framebuffer - we have vibe module
+#define MICROPY_PY_UCTYPES                (0)  // Low-level types - not needed
+#define MICROPY_PY_ASYNCIO                (0)  // Async - complex, maybe later
 
 // Minimal sys module (REPL needs it for prompts)
 #define MICROPY_PY_SYS                    (1)
@@ -39,8 +39,9 @@
 #define MICROPY_PY_SYS_ARGV               (1)
 #define MICROPY_PY_SYS_PS1_PS2            (1)
 #define MICROPY_PY_SYS_STDIO_BUFFER       (0)
+#define MICROPY_PY_SYS_STDFILES           (0)  // Don't use stream-based stdout (we use HAL)
 #define MICROPY_PY_OS                     (0)
-#define MICROPY_PY_IO                     (0)
+#define MICROPY_PY_IO                     (1)  // Needed for json module
 #define MICROPY_PY_ERRNO                  (0)
 #define MICROPY_PY_SELECT                 (0)
 #define MICROPY_PY_THREAD                 (0)

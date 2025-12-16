@@ -255,4 +255,63 @@ static inline float powf(float x, float y) {
     return (float)pow((double)x, (double)y);
 }
 
+/* Additional math functions implemented in stubs.c for MicroPython */
+double nan(const char *s);
+double copysign(double x, double y);
+double nearbyint(double x);
+double trunc(double x);
+double expm1(double x);
+double log2(double x);
+double log10(double x);
+double tan(double x);
+double asin(double x);
+double atan(double x);
+double atan2(double y, double x);
+double sinh(double x);
+double cosh(double x);
+double tanh(double x);
+double asinh(double x);
+double acosh(double x);
+double atanh(double x);
+double erf(double x);
+double erfc(double x);
+double tgamma(double x);
+double lgamma(double x);
+double modf(double x, double *iptr);
+double ldexp(double x, int exp);
+double frexp(double x, int *exp);
+
+/* Float versions - implemented as wrappers */
+static inline float nanf(const char *s) { return (float)nan(s); }
+static inline float copysignf(float x, float y) { return (float)copysign(x, y); }
+static inline float nearbyintf(float x) { return (float)nearbyint(x); }
+static inline float truncf(float x) { return (float)trunc(x); }
+static inline float expm1f(float x) { return (float)expm1(x); }
+static inline float log2f(float x) { return (float)log2(x); }
+static inline float log10f(float x) { return (float)log10(x); }
+static inline float tanf(float x) { return (float)tan(x); }
+static inline float asinf(float x) { return (float)asin(x); }
+static inline float atanf(float x) { return (float)atan(x); }
+static inline float atan2f(float y, float x) { return (float)atan2(y, x); }
+static inline float sinhf(float x) { return (float)sinh(x); }
+static inline float coshf(float x) { return (float)cosh(x); }
+static inline float tanhf(float x) { return (float)tanh(x); }
+static inline float asinhf(float x) { return (float)asinh(x); }
+static inline float acoshf(float x) { return (float)acosh(x); }
+static inline float atanhf(float x) { return (float)atanh(x); }
+static inline float erff(float x) { return (float)erf(x); }
+static inline float erfcf(float x) { return (float)erfc(x); }
+static inline float tgammaf(float x) { return (float)tgamma(x); }
+static inline float lgammaf(float x) { return (float)lgamma(x); }
+static inline float logf(float x) { return (float)log(x); }
+static inline float expf(float x) { return (float)exp(x); }
+static inline float modff(float x, float *iptr) {
+    double di;
+    float result = (float)modf(x, &di);
+    *iptr = (float)di;
+    return result;
+}
+static inline float ldexpf(float x, int e) { return (float)ldexp(x, e); }
+static inline float frexpf(float x, int *e) { return (float)frexp(x, e); }
+
 #endif /* _MATH_H */

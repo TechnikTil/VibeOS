@@ -378,3 +378,127 @@ Python can now:
 - Full graphics (pixels, rectangles, text)
 
 **Next**: Rewrite the browser in Python! The full API makes this possible.
+
+---
+
+## Session 59: MicroPython Extended Modules + Crash Fix
+
+**Goal**: Add standard library modules (json, random, re) and fix crash on Python builtins.
+
+### Modules Added
+
+Enabled standard library modules for building apps like browser in Python:
+
+1. **json** - `json.loads()`, `json.dumps()` for parsing/serializing JSON
+2. **random** - `random.randint()`, `random.random()` etc.
+3. **re** - Regular expressions for HTML parsing
+4. **heapq** - Priority queues
+5. **math** - Full math module (sin, cos, sqrt, log, exp, etc.)
+
+### Build System Changes
+
+**Extended modules from MicroPython reference repo:**
+- Copied `extmod/modjson.c`, `modrandom.c`, `modre.c`, `modheapq.c`
+- Copied `lib/re1.5/` regex library (modre.c includes the .c files directly)
+- Added to Makefile's `SRC_EXTMOD_C`
+
+**Math library for floats:**
+- Changed `MICROPY_FLOAT_IMPL` from NONE to DOUBLE
+- Added libgcc linking for soft-float support
+- Implemented full math library in `stubs.c`:
+  - Basic: fabs, floor, ceil, trunc, fmod, copysign, nearbyint
+  - Exponential: exp, expm1, log, log2, log10, pow, sqrt
+  - Trig: sin, cos, tan, asin, acos, atan, atan2
+  - Hyperbolic: sinh, cosh, tanh, asinh, acosh, atanh
+  - Special: erf, erfc, tgamma, lgamma (stubs)
+  - Float decomposition: modf, ldexp, frexp
+- Added declarations to `kernel/libc/math.h`
+
+**New libc header:**
+- Created `kernel/libc/stdbool.h` for bool/true/false
+
+### Critical Bug Fix: Stream-based stdout crash
+
+**Symptom**: All Python builtins (print, json.loads, etc.) crashed with:
+```
+KERNEL PANIC: Data abort
+ELR_EL1: 0x5af3f724 (in mp_stream_rw)
+FAR_EL1: 0xd2a00600b900012a (garbage address)
+```
+
+**Root cause**:
+- Enabled `MICROPY_PY_IO=1` for json module
+- This implicitly enabled stream-based stdout
+- Our stub `mp_sys_stdout_obj = MP_OBJ_NULL` was used as a stream
+- `print()` called `mp_get_stream(NULL)` → crash
+
+**Fix**:
+```c
+#define MICROPY_PY_SYS_STDFILES (0)  // Don't use stream-based stdout
+```
+With this disabled, print() uses `mp_hal_stdout_tx_strn()` (our HAL) instead.
+
+### Other Fixes
+
+- Added `mp_builtin_open_obj` stub (raises OSError - no file I/O support)
+- Added `-DMP_FALLTHROUGH=` to CFLAGS for re1.5 library
+- Changed optimization from `-Os` to `-O0` (safer for PIE binaries)
+
+### Configuration Summary (mpconfigport.h)
+
+```c
+MICROPY_CONFIG_ROM_LEVEL = FULL_FEATURES
+MICROPY_FLOAT_IMPL = DOUBLE
+MICROPY_PY_JSON = 1
+MICROPY_PY_RE = 1
+MICROPY_PY_RANDOM = 1
+MICROPY_PY_MATH = 1
+MICROPY_PY_HEAPQ = 1
+MICROPY_PY_STRUCT = 1
+MICROPY_PY_COLLECTIONS = 1
+MICROPY_PY_IO = 1
+MICROPY_PY_SYS_STDFILES = 0  // Critical!
+```
+
+### Files Modified
+- `micropython/ports/vibeos/Makefile` - extmod sources, -O0, libgcc, stdbool
+- `micropython/ports/vibeos/mpconfigport.h` - enable modules, STDFILES=0
+- `micropython/ports/vibeos/stubs.c` - math library, open() stub
+- `kernel/libc/math.h` - math function declarations
+- `kernel/libc/stdbool.h` - new file
+- `kernel/elf.c` - debug output for relocations (can remove later)
+
+### Files Added
+- `micropython/extmod/modjson.c`
+- `micropython/extmod/modrandom.c`
+- `micropython/extmod/modre.c`
+- `micropython/extmod/modheapq.c`
+- `micropython/lib/re1.5/*` - regex library
+
+### What Works Now
+```python
+import math
+print(math.sin(math.pi / 2))  # 1.0
+
+import json
+data = json.loads('{"name": "VibeOS"}')
+print(json.dumps(data))
+
+import random
+print(random.randint(1, 100))
+
+import re
+m = re.search(r'\d+', 'hello123')
+print(m.group(0))  # "123"
+```
+
+### Binary Size
+- Text: ~300KB (was 130KB before modules)
+- BSS: 2MB (GC heap)
+- Total: ~2.4MB
+
+### Lessons Learned
+1. **MICROPY_PY_IO enables stream-based stdout** - must explicitly disable STDFILES
+2. **modre.c #includes its dependencies** - don't compile re1.5 separately
+3. **Math functions need declarations** - add to math.h, not just stubs.c
+4. **Relocation debugging is valuable** - the ELF loader processes 2321 relocations correctly
