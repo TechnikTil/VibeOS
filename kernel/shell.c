@@ -34,8 +34,6 @@ void shell_run(void) {
     if (init) {
         console_puts("Starting init...\n\n");
         int result = process_exec("/bin/init");
-
-        // If we get here, init exited (should never happen)
         console_puts("\ninit exited with status ");
         printf("%d\n", result);
     } else {
