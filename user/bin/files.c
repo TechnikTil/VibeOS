@@ -20,19 +20,22 @@
 #define MAX_ITEMS       64
 #define MAX_VISIBLE     ((WIN_HEIGHT - PATH_BAR_HEIGHT - 4) / ITEM_HEIGHT)
 
-// Colors (1-bit style with some grays)
-#define COLOR_BG        0x00FFFFFF
-#define COLOR_FG        0x00000000
-#define COLOR_SELECTED  0x00000000
+// Modern colors
+#define COLOR_BG        0x00F5F5F5
+#define COLOR_FG        0x00333333
+#define COLOR_SELECTED  0x00007AFF  // Blue selection
 #define COLOR_SEL_TEXT  0x00FFFFFF
-#define COLOR_PATH_BG   0x00EEEEEE
+#define COLOR_PATH_BG   0x00FFFFFF
 #define COLOR_MENU_BG   0x00FFFFFF
-#define COLOR_MENU_HL   0x00000000
-#define COLOR_FOLDER    0x00FFCC00
+#define COLOR_MENU_HL   0x00007AFF
+#define COLOR_FOLDER    0x0066B3FF  // Lighter blue folders
+#define COLOR_FILE      0x00888888
+#define COLOR_BORDER    0x00E0E0E0
+#define COLOR_HOVER     0x00E8F4FF  // Light blue hover
 
 // Context menu
-#define MENU_ITEM_HEIGHT 18
-#define MENU_WIDTH       140
+#define MENU_ITEM_HEIGHT 24
+#define MENU_WIDTH       160
 
 typedef struct {
     char name[64];
@@ -85,25 +88,42 @@ static const char *menu_items[] = {
 #define buf_draw_string(x, y, s, fg, bg)      gfx_draw_string(&gfx, x, y, s, fg, bg)
 #define buf_draw_string_clip(x, y, s, fg, bg, max_w) gfx_draw_string_clip(&gfx, x, y, s, fg, bg, max_w)
 #define buf_draw_rect(x, y, w, h, c)          gfx_draw_rect(&gfx, x, y, w, h, c)
+#define buf_fill_rounded(x, y, w, h, r, c)    gfx_fill_rounded_rect(&gfx, x, y, w, h, r, c)
+#define buf_draw_rounded(x, y, w, h, r, c)    gfx_draw_rounded_rect(&gfx, x, y, w, h, r, c)
 
-// Draw folder icon (small, 12x10)
+// Draw folder icon (small, 14x12) - macOS-style
 static void draw_folder_icon(int x, int y, uint32_t bg) {
-    // Folder tab
-    buf_fill_rect(x, y, 5, 2, COLOR_FOLDER);
-    // Folder body
-    buf_fill_rect(x, y + 2, 12, 8, COLOR_FOLDER);
-    // Border
-    buf_draw_rect(x, y + 2, 12, 8, COLOR_FG);
+    (void)bg;
+    // Folder tab (top-left rounded flap)
+    buf_fill_rounded(x, y, 6, 3, 1, COLOR_FOLDER);
+    // Folder body with rounded corners
+    buf_fill_rounded(x, y + 2, 14, 10, 2, COLOR_FOLDER);
+    // Highlight line at top
+    for (int i = 1; i < 13; i++) {
+        if (x + i < win_w && y + 3 < win_h)
+            win_buffer[(y + 3) * win_w + x + i] = 0x0088CCFF;
+    }
 }
 
-// Draw file icon (small, 10x12)
+// Draw file icon (small, 12x14) - document style
 static void draw_file_icon(int x, int y, uint32_t bg) {
-    buf_fill_rect(x, y, 10, 12, COLOR_BG);
-    buf_draw_rect(x, y, 10, 12, COLOR_FG);
-    // Corner fold
+    (void)bg;
+    // White document background with rounded corners
+    buf_fill_rounded(x, y, 12, 14, 2, 0x00FFFFFF);
+    buf_draw_rounded(x, y, 12, 14, 2, COLOR_FILE);
+    // Document lines
     for (int i = 0; i < 3; i++) {
-        if (x + 7 + i < win_w && y + i < win_h)
-            win_buffer[(y + i) * win_w + x + 7 + i] = COLOR_FG;
+        int ly = y + 5 + i * 3;
+        if (ly < win_h) {
+            buf_fill_rect(x + 3, ly, 6, 1, 0x00CCCCCC);
+        }
+    }
+    // Corner fold
+    buf_fill_rect(x + 8, y, 4, 4, 0x00E0E0E0);
+    // Fold diagonal
+    for (int i = 0; i < 3; i++) {
+        if (x + 8 + i < win_w && y + i < win_h)
+            win_buffer[(y + i) * win_w + x + 8 + i] = COLOR_FILE;
     }
 }
 
@@ -538,11 +558,14 @@ static void cancel_rename(void) {
 // ============ Drawing ============
 
 static void draw_path_bar(void) {
-    buf_fill_rect(0, 0, win_w, PATH_BAR_HEIGHT, COLOR_PATH_BG);
-    buf_draw_rect(0, 0, win_w, PATH_BAR_HEIGHT, COLOR_FG);
+    // Background
+    buf_fill_rect(0, 0, win_w, PATH_BAR_HEIGHT + 4, COLOR_BG);
+    // Rounded path input field
+    buf_fill_rounded(4, 4, win_w - 8, PATH_BAR_HEIGHT - 4, 6, COLOR_PATH_BG);
+    buf_draw_rounded(4, 4, win_w - 8, PATH_BAR_HEIGHT - 4, 6, COLOR_BORDER);
 
     // Draw path
-    buf_draw_string_clip(4, 4, current_path, COLOR_FG, COLOR_PATH_BG, win_w - 8);
+    buf_draw_string_clip(10, 7, current_path, COLOR_FG, COLOR_PATH_BG, win_w - 20);
 }
 
 static void draw_item(int idx, int y) {
@@ -552,12 +575,15 @@ static void draw_item(int idx, int y) {
     uint32_t bg = is_selected ? COLOR_SELECTED : COLOR_BG;
     uint32_t fg = is_selected ? COLOR_SEL_TEXT : COLOR_FG;
 
-    // Background
-    buf_fill_rect(0, y, win_w - SCROLL_WIDTH, ITEM_HEIGHT, bg);
+    // Background - clear first, then draw rounded selection
+    buf_fill_rect(0, y, win_w - SCROLL_WIDTH, ITEM_HEIGHT, COLOR_BG);
+    if (is_selected) {
+        buf_fill_rounded(2, y + 1, win_w - SCROLL_WIDTH - 4, ITEM_HEIGHT - 2, 4, COLOR_SELECTED);
+    }
 
     // Icon
-    int icon_x = 4;
-    int icon_y = y + 2;
+    int icon_x = 6;
+    int icon_y = y + 3;
     if (item->is_dir) {
         draw_folder_icon(icon_x, icon_y, bg);
     } else {
@@ -565,28 +591,28 @@ static void draw_item(int idx, int y) {
     }
 
     // Name
-    int text_x = 20;
-    int text_y = y + 1;
+    int text_x = 24;
+    int text_y = y + 2;
 
     if (renaming && idx == selected_idx) {
-        // Draw rename input box
-        buf_fill_rect(text_x, y, win_w - SCROLL_WIDTH - text_x - 4, ITEM_HEIGHT, COLOR_BG);
-        buf_draw_rect(text_x, y, win_w - SCROLL_WIDTH - text_x - 4, ITEM_HEIGHT, COLOR_FG);
-        buf_draw_string_clip(text_x + 2, text_y, rename_buf, COLOR_FG, COLOR_BG, win_w - SCROLL_WIDTH - text_x - 8);
+        // Draw rename input box with rounded corners
+        buf_fill_rounded(text_x, y + 1, win_w - SCROLL_WIDTH - text_x - 6, ITEM_HEIGHT - 2, 4, COLOR_PATH_BG);
+        buf_draw_rounded(text_x, y + 1, win_w - SCROLL_WIDTH - text_x - 6, ITEM_HEIGHT - 2, 4, COLOR_BORDER);
+        buf_draw_string_clip(text_x + 4, text_y, rename_buf, COLOR_FG, COLOR_PATH_BG, win_w - SCROLL_WIDTH - text_x - 14);
 
         // Cursor
-        int cursor_x = text_x + 2 + rename_cursor * 8;
-        for (int cy = y + 2; cy < y + ITEM_HEIGHT - 2; cy++) {
+        int cursor_x = text_x + 4 + rename_cursor * 8;
+        for (int cy = y + 3; cy < y + ITEM_HEIGHT - 3; cy++) {
             if (cursor_x < win_w)
                 win_buffer[cy * win_w + cursor_x] = COLOR_FG;
         }
     } else {
-        buf_draw_string_clip(text_x, text_y, item->name, fg, bg, win_w - SCROLL_WIDTH - text_x - 4);
+        buf_draw_string_clip(text_x, text_y, item->name, fg, is_selected ? COLOR_SELECTED : COLOR_BG, win_w - SCROLL_WIDTH - text_x - 4);
     }
 }
 
 static void draw_file_list(void) {
-    int y = PATH_BAR_HEIGHT + 2;
+    int y = PATH_BAR_HEIGHT + 4;
 
     // Background
     buf_fill_rect(0, PATH_BAR_HEIGHT, win_w, win_h - PATH_BAR_HEIGHT, COLOR_BG);
@@ -597,25 +623,25 @@ static void draw_file_list(void) {
         y += ITEM_HEIGHT;
     }
 
-    // Scroll bar area
-    buf_fill_rect(win_w - SCROLL_WIDTH, PATH_BAR_HEIGHT, SCROLL_WIDTH, win_h - PATH_BAR_HEIGHT, COLOR_PATH_BG);
-    buf_draw_rect(win_w - SCROLL_WIDTH, PATH_BAR_HEIGHT, SCROLL_WIDTH, win_h - PATH_BAR_HEIGHT, COLOR_FG);
+    // Scroll bar track (subtle)
+    buf_fill_rect(win_w - SCROLL_WIDTH, PATH_BAR_HEIGHT + 4, SCROLL_WIDTH, win_h - PATH_BAR_HEIGHT - 8, COLOR_BG);
 
-    // Scroll thumb
+    // Scroll thumb - modern rounded pill style
     if (item_count > MAX_VISIBLE) {
-        int track_h = win_h - PATH_BAR_HEIGHT - 4;
+        int track_h = win_h - PATH_BAR_HEIGHT - 12;
         int thumb_h = (MAX_VISIBLE * track_h) / item_count;
-        if (thumb_h < 20) thumb_h = 20;
-        int thumb_y = PATH_BAR_HEIGHT + 2 + (scroll_offset * track_h) / item_count;
+        if (thumb_h < 24) thumb_h = 24;
+        int thumb_y = PATH_BAR_HEIGHT + 6 + (scroll_offset * track_h) / item_count;
 
-        buf_fill_rect(win_w - SCROLL_WIDTH + 2, thumb_y, SCROLL_WIDTH - 4, thumb_h, COLOR_FG);
+        // Rounded scroll thumb
+        buf_fill_rounded(win_w - SCROLL_WIDTH + 3, thumb_y, SCROLL_WIDTH - 6, thumb_h, 4, 0x00CCCCCC);
     }
 }
 
 static void draw_context_menu(void) {
     if (!menu_visible) return;
 
-    int menu_h = MENU_ITEM_COUNT * MENU_ITEM_HEIGHT + 4;
+    int menu_h = MENU_ITEM_COUNT * MENU_ITEM_HEIGHT + 8;
 
     // Adjust position if menu goes off screen
     int mx = menu_x;
@@ -623,19 +649,24 @@ static void draw_context_menu(void) {
     if (mx + MENU_WIDTH > win_w) mx = win_w - MENU_WIDTH;
     if (my + menu_h > win_h) my = win_h - menu_h;
 
-    // Background with border
-    buf_fill_rect(mx, my, MENU_WIDTH, menu_h, COLOR_MENU_BG);
-    buf_draw_rect(mx, my, MENU_WIDTH, menu_h, COLOR_FG);
-    buf_draw_rect(mx + 1, my + 1, MENU_WIDTH - 2, menu_h - 2, COLOR_FG);
+    // Shadow (simple offset shadow)
+    buf_fill_rounded(mx + 2, my + 2, MENU_WIDTH, menu_h, 8, 0x00666666);
+
+    // Background with rounded corners
+    buf_fill_rounded(mx, my, MENU_WIDTH, menu_h, 8, COLOR_MENU_BG);
+    buf_draw_rounded(mx, my, MENU_WIDTH, menu_h, 8, COLOR_BORDER);
 
     // Items
     for (int i = 0; i < MENU_ITEM_COUNT; i++) {
-        int item_y = my + 2 + i * MENU_ITEM_HEIGHT;
-        uint32_t bg = (i == menu_hover) ? COLOR_MENU_HL : COLOR_MENU_BG;
-        uint32_t fg = (i == menu_hover) ? COLOR_SEL_TEXT : COLOR_FG;
+        int item_y = my + 4 + i * MENU_ITEM_HEIGHT;
 
-        buf_fill_rect(mx + 2, item_y, MENU_WIDTH - 4, MENU_ITEM_HEIGHT, bg);
-        buf_draw_string(mx + 6, item_y + 1, menu_items[i], fg, bg);
+        if (i == menu_hover) {
+            // Rounded selection highlight
+            buf_fill_rounded(mx + 4, item_y, MENU_WIDTH - 8, MENU_ITEM_HEIGHT, 4, COLOR_MENU_HL);
+            buf_draw_string(mx + 12, item_y + 4, menu_items[i], COLOR_SEL_TEXT, COLOR_MENU_HL);
+        } else {
+            buf_draw_string(mx + 12, item_y + 4, menu_items[i], COLOR_FG, COLOR_MENU_BG);
+        }
     }
 }
 

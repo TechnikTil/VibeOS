@@ -35,12 +35,25 @@ static const char button_labels[4][4][3] = {
     { ".", "0", "=", "+" }
 };
 
+// Modern color palette
+#define COLOR_BG         0x00F5F5F5
+#define COLOR_DISPLAY_BG 0x00FFFFFF
+#define COLOR_DISPLAY_FG 0x00222222
+#define COLOR_BTN_NUM    0x00FFFFFF
+#define COLOR_BTN_OP     0x00FF9500  // Orange for operators
+#define COLOR_BTN_EQ     0x00007AFF  // Blue for equals
+#define COLOR_BTN_TEXT   0x00333333
+#define COLOR_BTN_OP_TXT 0x00FFFFFF
+#define COLOR_BTN_BORDER 0x00CCCCCC
+
 // ============ Drawing Helpers (macros wrapping gfx lib) ============
 
 #define buf_fill_rect(x, y, w, h, c)     gfx_fill_rect(&gfx, x, y, w, h, c)
 #define buf_draw_char(x, y, ch, fg, bg)  gfx_draw_char(&gfx, x, y, ch, fg, bg)
 #define buf_draw_string(x, y, s, fg, bg) gfx_draw_string(&gfx, x, y, s, fg, bg)
 #define buf_draw_rect(x, y, w, h, c)     gfx_draw_rect(&gfx, x, y, w, h, c)
+#define buf_fill_rounded(x, y, w, h, r, c) gfx_fill_rounded_rect(&gfx, x, y, w, h, r, c)
+#define buf_draw_rounded(x, y, w, h, r, c) gfx_draw_rounded_rect(&gfx, x, y, w, h, r, c)
 
 // ============ Float to String ============
 
@@ -104,9 +117,9 @@ static void float_to_str(double val, char *buf, int buf_size) {
 // ============ Drawing ============
 
 static void draw_display(void) {
-    // Display background
-    buf_fill_rect(BTN_PAD, BTN_PAD, win_w - BTN_PAD * 2, DISPLAY_H, 0x00EEEEEE);
-    buf_draw_rect(BTN_PAD, BTN_PAD, win_w - BTN_PAD * 2, DISPLAY_H, COLOR_BLACK);
+    // Display background - rounded white box
+    buf_fill_rounded(BTN_PAD, BTN_PAD, win_w - BTN_PAD * 2, DISPLAY_H, 6, COLOR_DISPLAY_BG);
+    buf_draw_rounded(BTN_PAD, BTN_PAD, win_w - BTN_PAD * 2, DISPLAY_H, 6, COLOR_BTN_BORDER);
 
     // Format number
     char buf[24];
@@ -114,36 +127,38 @@ static void draw_display(void) {
 
     // Right-align in display
     int text_len = strlen(buf);
-    int text_x = win_w - BTN_PAD * 2 - text_len * 8 - 4;
-    buf_draw_string(text_x, BTN_PAD + 8, buf, COLOR_BLACK, 0x00EEEEEE);
+    int text_x = win_w - BTN_PAD * 2 - text_len * 8 - 8;
+    buf_draw_string(text_x, BTN_PAD + 8, buf, COLOR_DISPLAY_FG, COLOR_DISPLAY_BG);
 }
 
 static void draw_button(int row, int col, int pressed) {
     int x = BTN_PAD + col * (BTN_W + BTN_PAD);
     int y = DISPLAY_H + BTN_PAD * 2 + row * (BTN_H + BTN_PAD);
 
-    uint32_t bg = pressed ? 0x00888888 : 0x00CCCCCC;
-    uint32_t fg = COLOR_BLACK;
+    const char *label = button_labels[row][col];
+    char c = label[0];
 
-    // Button face
-    buf_fill_rect(x, y, BTN_W, BTN_H, bg);
-    buf_draw_rect(x, y, BTN_W, BTN_H, COLOR_BLACK);
+    // Determine button colors based on type
+    uint32_t bg, fg;
+    int is_op = (c == '+' || c == '-' || c == '*' || c == '/');
+    int is_eq = (c == '=');
 
-    // 3D effect
-    if (!pressed) {
-        // Top and left highlight
-        for (int i = 0; i < BTN_W - 1; i++) {
-            if (x + 1 + i < win_w && y + 1 < win_h)
-                win_buffer[(y + 1) * win_w + x + 1 + i] = COLOR_WHITE;
-        }
-        for (int i = 0; i < BTN_H - 1; i++) {
-            if (x + 1 < win_w && y + 1 + i < win_h)
-                win_buffer[(y + 1 + i) * win_w + x + 1] = COLOR_WHITE;
-        }
+    if (is_eq) {
+        bg = pressed ? 0x00005FCC : COLOR_BTN_EQ;
+        fg = COLOR_BTN_OP_TXT;
+    } else if (is_op) {
+        bg = pressed ? 0x00CC7700 : COLOR_BTN_OP;
+        fg = COLOR_BTN_OP_TXT;
+    } else {
+        bg = pressed ? 0x00E0E0E0 : COLOR_BTN_NUM;
+        fg = COLOR_BTN_TEXT;
     }
 
+    // Button face - rounded
+    buf_fill_rounded(x, y, BTN_W, BTN_H, 6, bg);
+    buf_draw_rounded(x, y, BTN_W, BTN_H, 6, COLOR_BTN_BORDER);
+
     // Label
-    const char *label = button_labels[row][col];
     int label_len = strlen(label);
     int lx = x + (BTN_W - label_len * 8) / 2;
     int ly = y + (BTN_H - 16) / 2;
@@ -152,7 +167,7 @@ static void draw_button(int row, int col, int pressed) {
 
 static void draw_all(void) {
     // Clear background
-    buf_fill_rect(0, 0, win_w, win_h, 0x00DDDDDD);
+    buf_fill_rect(0, 0, win_w, win_h, COLOR_BG);
 
     // Display
     draw_display();

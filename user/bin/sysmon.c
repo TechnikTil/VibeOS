@@ -42,11 +42,25 @@ static size_t cached_mem_free = 0;
 static int cached_alloc_count = 0;
 static int cached_proc_count = 0;
 
+// Modern colors
+#define COLOR_BG         0x00F5F5F5
+#define COLOR_SECTION_BG 0x00FFFFFF
+#define COLOR_TEXT       0x00333333
+#define COLOR_LABEL      0x00666666
+#define COLOR_VALUE      0x00222222
+#define COLOR_BORDER     0x00E0E0E0
+#define COLOR_ACCENT     0x00007AFF
+#define COLOR_BAR_BG     0x00E8E8E8
+#define COLOR_BAR_FILL   0x0034C759  // Green
+#define COLOR_BAR_WARN   0x00FF9500  // Orange when high
+
 // Drawing macros
 #define buf_fill_rect(x, y, w, h, c)     gfx_fill_rect(&gfx, x, y, w, h, c)
 #define buf_draw_char(x, y, ch, fg, bg)  gfx_draw_char(&gfx, x, y, ch, fg, bg)
 #define buf_draw_string(x, y, s, fg, bg) gfx_draw_string(&gfx, x, y, s, fg, bg)
 #define buf_draw_rect(x, y, w, h, c)     gfx_draw_rect(&gfx, x, y, w, h, c)
+#define buf_fill_rounded(x, y, w, h, r, c) gfx_fill_rounded_rect(&gfx, x, y, w, h, r, c)
+#define buf_draw_rounded(x, y, w, h, r, c) gfx_draw_rounded_rect(&gfx, x, y, w, h, r, c)
 
 // ============ Formatting Helpers ============
 
@@ -185,73 +199,60 @@ static void format_datetime(char *buf, int year, int month, int day,
 // ============ Drawing ============
 
 static void draw_progress_bar(int x, int y, int w, int h, int percent) {
-    // Background
-    buf_fill_rect(x, y, w, h, COLOR_WHITE);
-    buf_draw_rect(x, y, w, h, COLOR_BLACK);
+    // Rounded background
+    buf_fill_rounded(x, y, w, h, h/2, COLOR_BAR_BG);
 
-    // Fill with diagonal stripes
+    // Fill - green normally, orange when > 80%
     int fill_w = (w - 2) * percent / 100;
     if (fill_w > 0) {
-        for (int py = y + 1; py < y + h - 1; py++) {
-            for (int px = x + 1; px < x + 1 + fill_w; px++) {
-                if ((px + py) % 2 == 0) {
-                    win_buffer[py * win_w + px] = COLOR_BLACK;
-                }
-            }
-        }
+        uint32_t fill_color = (percent > 80) ? COLOR_BAR_WARN : COLOR_BAR_FILL;
+        buf_fill_rounded(x + 1, y + 1, fill_w, h - 2, (h-2)/2, fill_color);
     }
 }
 
 static void draw_section_header(int y, const char *title) {
-    // Draw a line with title
-    buf_fill_rect(8, y, CONTENT_W - 16, 1, COLOR_BLACK);
-    buf_fill_rect(8, y + 2, CONTENT_W - 16, 1, COLOR_BLACK);
-
-    // Clear area for text
-    int text_w = strlen(title) * 8 + 8;
-    buf_fill_rect(12, y - 1, text_w, 5, COLOR_WHITE);
-
-    // Draw title
-    buf_draw_string(16, y - 6, title, COLOR_BLACK, COLOR_WHITE);
+    // Modern section header - just bold text with accent underline
+    buf_draw_string(12, y, title, COLOR_ACCENT, COLOR_BG);
+    buf_fill_rect(12, y + 17, strlen(title) * 8, 2, COLOR_ACCENT);
 }
 
 static void draw_label_value(int y, const char *label, const char *value) {
-    buf_draw_string(16, y, label, COLOR_BLACK, COLOR_WHITE);
-    buf_draw_string(120, y, value, COLOR_BLACK, COLOR_WHITE);
+    buf_draw_string(16, y, label, COLOR_LABEL, COLOR_BG);
+    buf_draw_string(120, y, value, COLOR_VALUE, COLOR_BG);
 }
 
 static void draw_all(void) {
     // Clear background
-    buf_fill_rect(0, 0, win_w, win_h, COLOR_WHITE);
+    buf_fill_rect(0, 0, win_w, win_h, COLOR_BG);
 
     char buf[64];
     int y = 8;
 
     // ============ Overview Section ============
-    draw_section_header(y + 4, "Overview");
-    y += 16;
+    draw_section_header(y, "Overview");
+    y += 24;
 
     // Uptime (use cached value)
     format_uptime(buf, cached_ticks);
     draw_label_value(y, "Uptime:", buf);
-    y += 16;
+    y += 18;
 
     // Date/Time
     int year, month, day, hour, minute, second, weekday;
     api->get_datetime(&year, &month, &day, &hour, &minute, &second, &weekday);
     format_datetime(buf, year, month, day, hour, minute, second);
     draw_label_value(y, "Time:", buf);
-    y += 20;
+    y += 24;
 
     // ============ Memory Section ============
-    draw_section_header(y + 4, "Memory");
-    y += 16;
+    draw_section_header(y, "Memory");
+    y += 24;
 
     // RAM total
     size_t ram_total = api->get_ram_total();
     format_size_mb(buf, ram_total);
     draw_label_value(y, "RAM Total:", buf);
-    y += 16;
+    y += 18;
 
     // Heap used/free (use cached values)
     size_t mem_total = cached_mem_used + cached_mem_free;
@@ -259,74 +260,73 @@ static void draw_all(void) {
 
     format_size_mb(buf, cached_mem_used);
     draw_label_value(y, "Heap Used:", buf);
-    y += 16;
+    y += 18;
 
     format_size_mb(buf, cached_mem_free);
     draw_label_value(y, "Heap Free:", buf);
-    y += 16;
+    y += 18;
 
     // Memory progress bar
-    buf_draw_string(16, y, "Heap:", COLOR_BLACK, COLOR_WHITE);
-    draw_progress_bar(70, y, CONTENT_W - 86, 12, mem_percent);
+    draw_progress_bar(16, y, CONTENT_W - 80, 14, mem_percent);
 
     // Show percentage
     format_num(buf, mem_percent);
     int blen = strlen(buf);
     buf[blen] = '%';
     buf[blen+1] = '\0';
-    buf_draw_string(CONTENT_W - 32, y, buf, COLOR_BLACK, COLOR_WHITE);
-    y += 20;
+    buf_draw_string(CONTENT_W - 48, y, buf, COLOR_VALUE, COLOR_BG);
+    y += 24;
 
     // ============ Debug Memory Section ============
-    draw_section_header(y + 4, "Memory Debug");
-    y += 16;
+    draw_section_header(y, "Memory Debug");
+    y += 24;
 
     // Heap bounds
     uint64_t heap_start = api->get_heap_start();
     uint64_t heap_end = api->get_heap_end();
     format_hex(buf, heap_start);
     draw_label_value(y, "Heap Start:", buf);
-    y += 16;
+    y += 18;
 
     format_hex(buf, heap_end);
     draw_label_value(y, "Heap End:", buf);
-    y += 16;
+    y += 18;
 
     // Heap size
     uint64_t heap_size = heap_end - heap_start;
     format_size_mb(buf, heap_size);
     draw_label_value(y, "Heap Size:", buf);
-    y += 16;
+    y += 18;
 
     // Stack pointer
     uint64_t sp = api->get_stack_ptr();
     format_hex(buf, sp);
     draw_label_value(y, "Stack Ptr:", buf);
-    y += 16;
+    y += 18;
 
     // Allocation count (use cached value)
     format_num(buf, cached_alloc_count);
     draw_label_value(y, "Allocs:", buf);
-    y += 20;
+    y += 24;
 
     // ============ Disk Section ============
-    draw_section_header(y + 4, "Disk");
-    y += 16;
+    draw_section_header(y, "Disk");
+    y += 24;
 
     int disk_total = api->get_disk_total();
     format_size_kb(buf, disk_total);
     draw_label_value(y, "Size:", buf);
-    y += 20;
+    y += 24;
 
     // ============ Processes Section ============
-    draw_section_header(y + 4, "Processes");
-    y += 16;
+    draw_section_header(y, "Processes");
+    y += 24;
 
     // Use cached process count
     format_num(buf, cached_proc_count);
     strcat(buf, " active");
     draw_label_value(y, "Count:", buf);
-    y += 16;
+    y += 18;
 
     // List active processes (no limit)
     const char *state_names[] = { "-", "Ready", "Run", "Block", "Zombie" };
@@ -339,33 +339,39 @@ static void draw_all(void) {
             if (strlen(name) > 12) {
                 name[12] = '\0';
             }
-            buf_draw_string(16, y, name, COLOR_BLACK, COLOR_WHITE);
+            buf_draw_string(24, y, name, COLOR_TEXT, COLOR_BG);
 
             const char *state_str = (state >= 0 && state <= 4) ? state_names[state] : "?";
-            buf_draw_string(130, y, state_str, COLOR_BLACK, COLOR_WHITE);
-            y += 14;
+            uint32_t state_color = (state == 2) ? COLOR_BAR_FILL : COLOR_LABEL;  // Green if running
+            buf_draw_string(140, y, state_str, state_color, COLOR_BG);
+            y += 16;
             shown++;
         }
     }
     if (shown == 0) {
-        buf_draw_string(16, y, "(none)", COLOR_BLACK, COLOR_WHITE);
-        y += 14;
+        buf_draw_string(24, y, "(none)", COLOR_LABEL, COLOR_BG);
+        y += 16;
     }
-    y += 6;
+    y += 8;
 
     // ============ Sound Section ============
-    draw_section_header(y + 4, "Sound");
-    y += 16;
+    draw_section_header(y, "Sound");
+    y += 24;
 
     const char *sound_status;
+    uint32_t sound_color;
     if (api->sound_is_playing()) {
         sound_status = "Playing";
+        sound_color = COLOR_BAR_FILL;
     } else if (api->sound_is_paused()) {
         sound_status = "Paused";
+        sound_color = COLOR_BAR_WARN;
     } else {
         sound_status = "Idle";
+        sound_color = COLOR_LABEL;
     }
-    draw_label_value(y, "Status:", sound_status);
+    buf_draw_string(16, y, "Status:", COLOR_LABEL, COLOR_BG);
+    buf_draw_string(120, y, sound_status, sound_color, COLOR_BG);
 
     api->window_invalidate(window_id);
 }

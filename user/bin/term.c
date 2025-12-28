@@ -12,6 +12,7 @@
  */
 
 #include "../lib/vibe.h"
+#include "../lib/gfx.h"
 
 // Terminal dimensions (characters)
 #define TERM_COLS 80
@@ -32,15 +33,20 @@
 #define WIN_WIDTH  (TERM_COLS * CHAR_WIDTH + SCROLLBAR_WIDTH)
 #define WIN_HEIGHT (TERM_ROWS * CHAR_HEIGHT)
 
-// Colors (1-bit style)
-#define TERM_BG 0x00FFFFFF
-#define TERM_FG 0x00000000
+// Modern terminal colors
+#define TERM_BG         0x00FFFFFF   // Clean white background
+#define TERM_FG         0x00333333   // Soft black text
+#define SCROLL_BG       0x00F5F5F5   // Scrollbar track
+#define SCROLL_THUMB    0x00CCCCCC   // Scrollbar thumb
+#define SCROLL_HOVER    0x00AAAAAA   // Scrollbar thumb hover
+#define CURSOR_COLOR    0x00007AFF   // Blue cursor
 
 // Global state
 static kapi_t *api;
 static int window_id = -1;
 static uint32_t *win_buffer;
 static int win_w, win_h;
+static gfx_ctx_t gfx;
 
 // Scrollback buffer - ring buffer of lines
 static char scrollback[SCROLLBACK_LINES][TERM_COLS];
@@ -180,16 +186,16 @@ static void draw_cursor(void) {
     // Only draw cursor if we're at the bottom (not scrolled back) and visible
     if (scroll_offset != 0 || !cursor_visible) return;
 
-    // Draw cursor as inverse block
+    // Draw modern blue bar cursor
     int px = cursor_col * CHAR_WIDTH;
     int py = cursor_row * CHAR_HEIGHT;
 
+    // 2-pixel wide vertical bar cursor (modern style)
     for (int y = 0; y < CHAR_HEIGHT; y++) {
-        for (int x = 0; x < CHAR_WIDTH; x++) {
+        for (int x = 0; x < 2; x++) {
             int idx = (py + y) * win_w + (px + x);
             if (idx >= 0 && idx < win_w * win_h) {
-                // Invert the pixel
-                win_buffer[idx] = win_buffer[idx] == TERM_BG ? TERM_FG : TERM_BG;
+                win_buffer[idx] = CURSOR_COLOR;
             }
         }
     }
@@ -212,55 +218,33 @@ static void draw_scrollbar(void) {
     int sb_y = 0;
     int sb_h = WIN_HEIGHT;
 
-    // Draw scrollbar background (light gray)
-    uint32_t track_color = 0x00CCCCCC;
-    for (int y = sb_y; y < sb_y + sb_h; y++) {
-        for (int x = sb_x; x < sb_x + SCROLLBAR_WIDTH; x++) {
-            int idx = y * win_w + x;
-            if (idx >= 0 && idx < win_w * win_h) {
-                win_buffer[idx] = track_color;
-            }
-        }
-    }
+    // Draw scrollbar background (subtle light gray)
+    gfx_fill_rect(&gfx, sb_x, sb_y, SCROLLBAR_WIDTH, sb_h, SCROLL_BG);
 
     // Calculate thumb position and size
     int max_offset = scroll_count - TERM_ROWS;
     if (max_offset < 0) max_offset = 0;
 
-    // If there's no scrollable content, fill the whole track
+    // If there's no scrollable content, draw a subtle disabled thumb
     if (max_offset == 0) {
-        // Draw full-height thumb (disabled state)
-        uint32_t thumb_color = 0x00999999;
-        for (int y = sb_y + 2; y < sb_y + sb_h - 2; y++) {
-            for (int x = sb_x + 2; x < sb_x + SCROLLBAR_WIDTH - 2; x++) {
-                int idx = y * win_w + x;
-                if (idx >= 0 && idx < win_w * win_h) {
-                    win_buffer[idx] = thumb_color;
-                }
-            }
-        }
+        // Small rounded thumb at bottom (macOS style when no scroll)
+        int thumb_h = 40;
+        int thumb_y = sb_h - thumb_h - 4;
+        gfx_fill_rounded_rect(&gfx, sb_x + 4, thumb_y, SCROLLBAR_WIDTH - 8, thumb_h, 4, 0x00E0E0E0);
         return;
     }
 
     // Calculate thumb size proportional to visible content
     int thumb_h = (sb_h * TERM_ROWS) / scroll_count;
     if (thumb_h < SCROLLBAR_MIN_THUMB) thumb_h = SCROLLBAR_MIN_THUMB;
-    if (thumb_h > sb_h - 4) thumb_h = sb_h - 4;
+    if (thumb_h > sb_h - 8) thumb_h = sb_h - 8;
 
     // Calculate thumb position (inverted because higher offset = scrolled up)
-    int track_range = sb_h - thumb_h - 4;
-    int thumb_y = sb_y + 2 + ((max_offset - scroll_offset) * track_range) / max_offset;
+    int track_range = sb_h - thumb_h - 8;
+    int thumb_y = sb_y + 4 + ((max_offset - scroll_offset) * track_range) / max_offset;
 
-    // Draw thumb (dark gray)
-    uint32_t thumb_color = 0x00666666;
-    for (int y = thumb_y; y < thumb_y + thumb_h; y++) {
-        for (int x = sb_x + 2; x < sb_x + SCROLLBAR_WIDTH - 2; x++) {
-            int idx = y * win_w + x;
-            if (idx >= 0 && idx < win_w * win_h) {
-                win_buffer[idx] = thumb_color;
-            }
-        }
-    }
+    // Draw rounded pill-style thumb (modern macOS style)
+    gfx_fill_rounded_rect(&gfx, sb_x + 4, thumb_y, SCROLLBAR_WIDTH - 8, thumb_h, 4, SCROLL_THUMB);
 }
 
 static void redraw_screen(void) {
@@ -486,6 +470,9 @@ int main(kapi_t *kapi, int argc, char **argv) {
         return 1;
     }
 
+    // Initialize graphics context
+    gfx_init(&gfx, win_buffer, win_w, win_h, api->font_data);
+
     // Initialize scrollback buffer
     clear_all();
 
@@ -624,6 +611,7 @@ int main(kapi_t *kapi, int argc, char **argv) {
             if (event_type == WIN_EVENT_RESIZE) {
                 // Re-fetch buffer with new dimensions
                 win_buffer = api->window_get_buffer(window_id, &win_w, &win_h);
+                gfx_init(&gfx, win_buffer, win_w, win_h, api->font_data);
                 redraw_screen();
             }
         }

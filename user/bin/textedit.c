@@ -24,13 +24,22 @@ static gfx_ctx_t gfx;
 #define CHAR_W 8
 #define CHAR_H 16
 
-// Colors for syntax highlighting
-#define COLOR_GUTTER_BG   0x00EEEEEE
-#define COLOR_GUTTER_FG   0x00888888
-#define COLOR_KEYWORD     0x000000AA  // Dark blue
-#define COLOR_COMMENT     0x00008800  // Dark green
-#define COLOR_STRING      0x00AA0000  // Dark red
-#define COLOR_NUMBER      0x00AA00AA  // Purple
+// Modern color palette
+#define COLOR_BG          0x00FFFFFF  // White background
+#define COLOR_GUTTER_BG   0x00F5F5F5
+#define COLOR_GUTTER_FG   0x00AAAAAA
+#define COLOR_GUTTER_SEP  0x00E0E0E0
+#define COLOR_STATUS_BG   0x00F0F0F0
+#define COLOR_STATUS_FG   0x00666666
+#define COLOR_CURSOR      0x00007AFF  // Blue cursor
+#define COLOR_SELECTION   0x00E5F0FF  // Light blue selection bg
+
+// Syntax highlighting (VS Code inspired)
+#define COLOR_KEYWORD     0x00AF00DB  // Purple
+#define COLOR_COMMENT     0x00008000  // Green
+#define COLOR_STRING      0x00A31515  // Red/brown
+#define COLOR_NUMBER      0x00098658  // Teal
+#define COLOR_TEXT        0x00333333  // Dark gray text
 
 // Text buffer
 #define MAX_LINES 256
@@ -100,6 +109,8 @@ static void detect_syntax(const char *filename) {
 #define buf_fill_rect(x, y, w, h, c)     gfx_fill_rect(&gfx, x, y, w, h, c)
 #define buf_draw_char(x, y, ch, fg, bg)  gfx_draw_char(&gfx, x, y, ch, fg, bg)
 #define buf_draw_string(x, y, s, fg, bg) gfx_draw_string(&gfx, x, y, s, fg, bg)
+#define buf_fill_rounded(x, y, w, h, r, c) gfx_fill_rounded_rect(&gfx, x, y, w, h, r, c)
+#define buf_draw_rounded(x, y, w, h, r, c) gfx_draw_rounded_rect(&gfx, x, y, w, h, r, c)
 
 // ============ Text Buffer Helpers ============
 
@@ -294,76 +305,63 @@ static void save_file(void) {
 
 static void draw_save_as_modal(void) {
     // Modal dimensions
-    int modal_w = 300;
-    int modal_h = 80;
-    int modal_x = (win_w - modal_w) / 2;
-    int modal_y = (win_h - modal_h) / 2;
-
-    // Draw shadow
-    buf_fill_rect(modal_x + 3, modal_y + 3, modal_w, modal_h, 0x00888888);
-
-    // Draw modal background
-    buf_fill_rect(modal_x, modal_y, modal_w, modal_h, COLOR_WHITE);
-
-    // Draw border
-    buf_fill_rect(modal_x, modal_y, modal_w, 1, COLOR_BLACK);
-    buf_fill_rect(modal_x, modal_y + modal_h - 1, modal_w, 1, COLOR_BLACK);
-    buf_fill_rect(modal_x, modal_y, 1, modal_h, COLOR_BLACK);
-    buf_fill_rect(modal_x + modal_w - 1, modal_y, 1, modal_h, COLOR_BLACK);
-
-    // Draw title
-    buf_draw_string(modal_x + 8, modal_y + 8, "Save As:", COLOR_BLACK, COLOR_WHITE);
-
-    // Draw text input box
-    int input_x = modal_x + 8;
-    int input_y = modal_y + 28;
-    int input_w = modal_w - 16;
-    int input_h = 20;
-
-    buf_fill_rect(input_x, input_y, input_w, input_h, COLOR_WHITE);
-    buf_fill_rect(input_x, input_y, input_w, 1, COLOR_BLACK);
-    buf_fill_rect(input_x, input_y + input_h - 1, input_w, 1, COLOR_BLACK);
-    buf_fill_rect(input_x, input_y, 1, input_h, COLOR_BLACK);
-    buf_fill_rect(input_x + input_w - 1, input_y, 1, input_h, COLOR_BLACK);
-
-    // Draw filename text
-    buf_draw_string(input_x + 4, input_y + 2, save_as_buf, COLOR_BLACK, COLOR_WHITE);
-
-    // Draw cursor
-    int cursor_x = input_x + 4 + save_as_len * CHAR_W;
-    buf_fill_rect(cursor_x, input_y + 2, CHAR_W, CHAR_H, COLOR_BLACK);
-
-    // Draw hint
-    buf_draw_string(modal_x + 8, modal_y + 56, "Enter=Save  Esc=Cancel", COLOR_BLACK, COLOR_WHITE);
-}
-
-static void draw_confirm_close_modal(void) {
-    // Modal dimensions
     int modal_w = 320;
     int modal_h = 100;
     int modal_x = (win_w - modal_w) / 2;
     int modal_y = (win_h - modal_h) / 2;
 
     // Draw shadow
-    buf_fill_rect(modal_x + 3, modal_y + 3, modal_w, modal_h, 0x00888888);
+    buf_fill_rounded(modal_x + 4, modal_y + 4, modal_w, modal_h, 10, 0x00666666);
 
-    // Draw modal background
-    buf_fill_rect(modal_x, modal_y, modal_w, modal_h, COLOR_WHITE);
+    // Draw modal background with rounded corners
+    buf_fill_rounded(modal_x, modal_y, modal_w, modal_h, 10, COLOR_BG);
+    buf_draw_rounded(modal_x, modal_y, modal_w, modal_h, 10, COLOR_GUTTER_SEP);
 
-    // Draw border
-    buf_fill_rect(modal_x, modal_y, modal_w, 1, COLOR_BLACK);
-    buf_fill_rect(modal_x, modal_y + modal_h - 1, modal_w, 1, COLOR_BLACK);
-    buf_fill_rect(modal_x, modal_y, 1, modal_h, COLOR_BLACK);
-    buf_fill_rect(modal_x + modal_w - 1, modal_y, 1, modal_h, COLOR_BLACK);
+    // Draw title
+    buf_draw_string(modal_x + 16, modal_y + 14, "Save As:", COLOR_TEXT, COLOR_BG);
+
+    // Draw text input box with rounded corners
+    int input_x = modal_x + 16;
+    int input_y = modal_y + 36;
+    int input_w = modal_w - 32;
+    int input_h = 28;
+
+    buf_fill_rounded(input_x, input_y, input_w, input_h, 6, COLOR_BG);
+    buf_draw_rounded(input_x, input_y, input_w, input_h, 6, COLOR_GUTTER_SEP);
+
+    // Draw filename text
+    buf_draw_string(input_x + 8, input_y + 6, save_as_buf, COLOR_TEXT, COLOR_BG);
+
+    // Draw blue bar cursor
+    int cursor_x = input_x + 8 + save_as_len * CHAR_W;
+    buf_fill_rect(cursor_x, input_y + 4, 2, CHAR_H, COLOR_CURSOR);
+
+    // Draw hint
+    buf_draw_string(modal_x + 16, modal_y + 74, "Enter=Save  Esc=Cancel", COLOR_STATUS_FG, COLOR_BG);
+}
+
+static void draw_confirm_close_modal(void) {
+    // Modal dimensions
+    int modal_w = 340;
+    int modal_h = 120;
+    int modal_x = (win_w - modal_w) / 2;
+    int modal_y = (win_h - modal_h) / 2;
+
+    // Draw shadow
+    buf_fill_rounded(modal_x + 4, modal_y + 4, modal_w, modal_h, 10, 0x00666666);
+
+    // Draw modal background with rounded corners
+    buf_fill_rounded(modal_x, modal_y, modal_w, modal_h, 10, COLOR_BG);
+    buf_draw_rounded(modal_x, modal_y, modal_w, modal_h, 10, COLOR_GUTTER_SEP);
 
     // Draw message
-    buf_draw_string(modal_x + 16, modal_y + 12, "You have unsaved changes.", COLOR_BLACK, COLOR_WHITE);
-    buf_draw_string(modal_x + 16, modal_y + 30, "Save before closing?", COLOR_BLACK, COLOR_WHITE);
+    buf_draw_string(modal_x + 20, modal_y + 16, "You have unsaved changes.", COLOR_TEXT, COLOR_BG);
+    buf_draw_string(modal_x + 20, modal_y + 36, "Save before closing?", COLOR_STATUS_FG, COLOR_BG);
 
     // Button dimensions
-    int btn_w = 85;
-    int btn_h = 24;
-    int btn_y = modal_y + 60;
+    int btn_w = 90;
+    int btn_h = 28;
+    int btn_y = modal_y + 70;
     int btn_spacing = 10;
     int total_btn_w = 3 * btn_w + 2 * btn_spacing;
     int btn_start_x = modal_x + (modal_w - total_btn_w) / 2;
@@ -372,14 +370,23 @@ static void draw_confirm_close_modal(void) {
     const char *labels[] = {"Save", "Don't Save", "Cancel"};
     for (int i = 0; i < 3; i++) {
         int bx = btn_start_x + i * (btn_w + btn_spacing);
-        uint32_t bg = (i == confirm_close_hover) ? COLOR_BLACK : COLOR_WHITE;
-        uint32_t fg = (i == confirm_close_hover) ? COLOR_WHITE : COLOR_BLACK;
 
-        buf_fill_rect(bx, btn_y, btn_w, btn_h, bg);
-        buf_fill_rect(bx, btn_y, btn_w, 1, COLOR_BLACK);
-        buf_fill_rect(bx, btn_y + btn_h - 1, btn_w, 1, COLOR_BLACK);
-        buf_fill_rect(bx, btn_y, 1, btn_h, COLOR_BLACK);
-        buf_fill_rect(bx + btn_w - 1, btn_y, 1, btn_h, COLOR_BLACK);
+        // Button colors - save button is blue, others are gray
+        uint32_t bg, fg;
+        if (i == 0) {
+            // Save button - blue (primary action)
+            bg = (i == confirm_close_hover) ? 0x00005FCC : COLOR_CURSOR;
+            fg = COLOR_BG;
+        } else if (i == confirm_close_hover) {
+            bg = COLOR_GUTTER_BG;
+            fg = COLOR_TEXT;
+        } else {
+            bg = COLOR_BG;
+            fg = COLOR_TEXT;
+        }
+
+        buf_fill_rounded(bx, btn_y, btn_w, btn_h, 6, bg);
+        buf_draw_rounded(bx, btn_y, btn_w, btn_h, 6, i == 0 ? COLOR_CURSOR : COLOR_GUTTER_SEP);
 
         // Center label
         int label_len = strlen(labels[i]);
@@ -419,18 +426,12 @@ static void draw_line_number(int screen_row, int line_num) {
 
 static void draw_all(void) {
     // Clear background (white)
-    buf_fill_rect(0, 0, win_w, win_h, COLOR_WHITE);
+    buf_fill_rect(0, 0, win_w, win_h, COLOR_BG);
 
     // Draw gutter background
     buf_fill_rect(0, 0, GUTTER_W, win_h, COLOR_GUTTER_BG);
-    // Gutter separator line
-    buf_fill_rect(GUTTER_W - 1, 0, 1, win_h, 0x00CCCCCC);
-
-    // Draw border
-    buf_fill_rect(0, 0, win_w, 1, COLOR_BLACK);
-    buf_fill_rect(0, win_h - 1, win_w, 1, COLOR_BLACK);
-    buf_fill_rect(0, 0, 1, win_h, COLOR_BLACK);
-    buf_fill_rect(win_w - 1, 0, 1, win_h, COLOR_BLACK);
+    // Gutter separator line (subtle)
+    buf_fill_rect(GUTTER_W - 1, 0, 1, win_h, COLOR_GUTTER_SEP);
 
     // Get cursor line/col for scroll adjustment
     int cursor_line, cursor_col;
@@ -463,15 +464,12 @@ static void draw_all(void) {
     char string_char = 0;
 
     for (int i = 0; i <= text_len; i++) {
-        // Draw cursor
+        // Draw cursor (modern blue bar)
         if (i == cursor_pos && current_line >= scroll_offset && current_line < scroll_offset + visible_rows) {
             int cy = CONTENT_Y + (current_line - scroll_offset) * CHAR_H;
             int cx = CONTENT_X + col * CHAR_W;
-            // Inverse block cursor
-            buf_fill_rect(cx, cy, CHAR_W, CHAR_H, COLOR_BLACK);
-            if (i < text_len && text_buffer[i] != '\n') {
-                buf_draw_char(cx, cy, text_buffer[i], COLOR_WHITE, COLOR_BLACK);
-            }
+            // 2-pixel wide blue bar cursor
+            buf_fill_rect(cx, cy, 2, CHAR_H, COLOR_CURSOR);
         }
 
         if (i >= text_len) break;
@@ -484,7 +482,7 @@ static void draw_all(void) {
             col = 0;
         } else {
             // Determine color for this character
-            uint32_t fg_color = COLOR_BLACK;
+            uint32_t fg_color = COLOR_TEXT;
 
             if (syntax_c) {
                 // Check for comment start/end
@@ -513,7 +511,7 @@ static void draw_all(void) {
                                 int cy = CONTENT_Y + (current_line - scroll_offset) * CHAR_H;
                                 int cx = CONTENT_X + col * CHAR_W;
                                 if (cx + CHAR_W <= win_w - CONTENT_X) {
-                                    buf_draw_char(cx, cy, c, fg_color, COLOR_WHITE);
+                                    buf_draw_char(cx, cy, c, fg_color, COLOR_BG);
                                 }
                             }
                         }
@@ -584,7 +582,7 @@ static void draw_all(void) {
                     int cy = CONTENT_Y + (current_line - scroll_offset) * CHAR_H;
                     int cx = CONTENT_X + col * CHAR_W;
                     if (cx + CHAR_W <= win_w - CONTENT_X) {
-                        buf_draw_char(cx, cy, c, fg_color, COLOR_WHITE);
+                        buf_draw_char(cx, cy, c, fg_color, COLOR_BG);
                     }
                 }
             }
@@ -592,9 +590,9 @@ static void draw_all(void) {
         }
     }
 
-    // Draw status bar at bottom
-    int status_y = win_h - CHAR_H - 2;
-    buf_fill_rect(1, status_y - 1, win_w - 2, CHAR_H + 2, 0x00DDDDDD);
+    // Draw modern status bar at bottom
+    int status_y = win_h - CHAR_H - 4;
+    buf_fill_rect(0, status_y - 2, win_w, CHAR_H + 6, COLOR_STATUS_BG);
 
     // Status text: filename and position
     char status[64];
@@ -667,7 +665,7 @@ static void draw_all(void) {
 
     status[si] = '\0';
 
-    buf_draw_string(4, status_y, status, COLOR_BLACK, 0x00DDDDDD);
+    buf_draw_string(8, status_y, status, COLOR_STATUS_FG, COLOR_STATUS_BG);
 
     // Draw Save As modal if active
     if (save_as_mode) {

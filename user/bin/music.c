@@ -18,10 +18,16 @@ static uint32_t *win_buffer;
 static int win_w, win_h;
 static gfx_ctx_t gfx;
 
-// ============ Colors - Classic Mac ============
-#define BLACK   0x00000000
-#define WHITE   0x00FFFFFF
-#define GRAY    0x00808080
+// ============ Modern Color Palette ============
+#define BLACK       0x00333333
+#define WHITE       0x00FFFFFF
+#define GRAY        0x00999999
+#define LIGHT_GRAY  0x00F5F5F5
+#define BORDER      0x00E0E0E0
+#define ACCENT      0x00007AFF  // Blue accent
+#define ACCENT_DARK 0x00005FCC
+#define RED         0x00FF5F57  // Red for stop
+#define GREEN       0x0034C759  // Green for play
 
 // ============ Layout Constants ============
 #define SIDEBAR_W       160
@@ -152,19 +158,15 @@ static void show_error(const char *msg) {
     error_tick = api->get_uptime_ticks();
 }
 
-// Draw 3D button (classic Mac style)
+// Draw modern rounded button
 static void draw_button(int x, int y, int w, int h, const char *label, int pressed) {
-    if (pressed) {
-        fill_rect(x, y, w, h, BLACK);
-        draw_string(x + (w - strlen(label) * 8) / 2, y + (h - 16) / 2, label, WHITE, BLACK);
-    } else {
-        fill_rect(x, y, w, h, WHITE);
-        draw_rect(x, y, w, h, BLACK);
-        // 3D effect
-        draw_hline(x + 1, y + h - 2, w - 2, GRAY);
-        draw_vline(x + w - 2, y + 1, h - 2, GRAY);
-        draw_string(x + (w - strlen(label) * 8) / 2, y + (h - 16) / 2, label, BLACK, WHITE);
-    }
+    uint32_t bg = pressed ? ACCENT_DARK : LIGHT_GRAY;
+    uint32_t fg = pressed ? WHITE : BLACK;
+    uint32_t border_color = pressed ? ACCENT : BORDER;
+
+    gfx_fill_rounded_rect(&gfx, x, y, w, h, 6, bg);
+    gfx_draw_rounded_rect(&gfx, x, y, w, h, 6, border_color);
+    draw_string(x + (w - strlen(label) * 8) / 2, y + (h - 16) / 2, label, fg, bg);
 }
 
 // Draw checkerboard pattern (System 7 style)
@@ -184,36 +186,36 @@ static void draw_pattern(int x, int y, int w, int h) {
 
 static void draw_sidebar(void) {
     // Sidebar background
-    fill_rect(0, 0, SIDEBAR_W, win_h - CONTROLS_H, WHITE);
-    draw_vline(SIDEBAR_W - 1, 0, win_h - CONTROLS_H, BLACK);
+    fill_rect(0, 0, SIDEBAR_W, win_h - CONTROLS_H, LIGHT_GRAY);
+    draw_vline(SIDEBAR_W - 1, 0, win_h - CONTROLS_H, BORDER);
 
     // Title
-    draw_string(8, 6, "Albums", BLACK, WHITE);
-    draw_hline(4, 24, SIDEBAR_W - 8, BLACK);
+    draw_string(8, 8, "Albums", GRAY, LIGHT_GRAY);
+    draw_hline(4, 26, SIDEBAR_W - 8, BORDER);
 
     // Album list
-    int y = 28;
-    int visible_albums = (win_h - CONTROLS_H - 32) / ALBUM_ITEM_H;
+    int y = 30;
+    int visible_albums = (win_h - CONTROLS_H - 34) / ALBUM_ITEM_H;
 
     for (int i = album_scroll; i < album_count && i < album_scroll + visible_albums; i++) {
         int item_y = y + (i - album_scroll) * ALBUM_ITEM_H;
 
-        // Highlight selected
+        // Highlight selected with rounded blue selection
         if (i == selected_album) {
-            fill_rect(2, item_y, SIDEBAR_W - 4, ALBUM_ITEM_H - 2, BLACK);
-            draw_text_clip(6, item_y + 2, albums[i].name, WHITE, BLACK, SIDEBAR_W - 12);
+            gfx_fill_rounded_rect(&gfx, 4, item_y, SIDEBAR_W - 8, ALBUM_ITEM_H - 2, 4, ACCENT);
+            draw_text_clip(8, item_y + 2, albums[i].name, WHITE, ACCENT, SIDEBAR_W - 16);
         } else {
-            draw_text_clip(6, item_y + 2, albums[i].name, BLACK, WHITE, SIDEBAR_W - 12);
+            draw_text_clip(8, item_y + 2, albums[i].name, BLACK, LIGHT_GRAY, SIDEBAR_W - 16);
         }
     }
 
     // Scroll arrows if needed
     if (album_count > visible_albums) {
         if (album_scroll > 0) {
-            draw_string(SIDEBAR_W - 16, 28, "^", BLACK, WHITE);
+            draw_string(SIDEBAR_W - 16, 30, "^", GRAY, LIGHT_GRAY);
         }
         if (album_scroll + visible_albums < album_count) {
-            draw_string(SIDEBAR_W - 16, win_h - CONTROLS_H - 20, "v", BLACK, WHITE);
+            draw_string(SIDEBAR_W - 16, win_h - CONTROLS_H - 20, "v", GRAY, LIGHT_GRAY);
         }
     }
 }
