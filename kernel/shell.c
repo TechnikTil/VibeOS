@@ -1,8 +1,8 @@
 /*
  * VibeOS Shell Bootstrap
  *
- * Launches /bin/init on boot. Falls back to /bin/vibesh if init is not found,
- * then to a minimal recovery shell.
+ * Launches /bin/splash on boot, which then launches desktop.
+ * Falls back to recovery shell if splash/desktop not found.
  */
 
 #include "shell.h"
@@ -32,31 +32,28 @@ void shell_init(void) {
 }
 
 void shell_run(void) {
-    console_puts("\n");
-    console_set_color(COLOR_AMBER, COLOR_BLACK);
-    console_puts("VibeOS v0.1\n");
-    console_set_color(COLOR_WHITE, COLOR_BLACK);
-
-    // Try to launch init
-    vfs_node_t *init = vfs_lookup("/bin/init");
-    if (init) {
-        console_puts("Starting init...\n\n");
-        int result = process_exec("/bin/init");
-        console_puts("\ninit exited with status ");
-        printf("%d\n", result);
+    // Try to launch splash screen (which then launches desktop)
+    vfs_node_t *splash = vfs_lookup("/bin/splash");
+    if (splash) {
+        int result = process_exec("/bin/splash");
+        // If splash/desktop exits, show status
+        if (result != 0) {
+            console_puts("\nDesktop exited with status ");
+            printf("%d\n", result);
+        }
     } else {
-        // Fall back to vibesh if init not found
+        // Fall back to vibesh if splash not found
         vfs_node_t *vibesh = vfs_lookup("/bin/vibesh");
         if (vibesh) {
-            console_puts("Starting vibesh (init not found)...\n\n");
+            console_puts("Starting vibesh (splash not found)...\n\n");
             int result = process_exec("/bin/vibesh");
             console_puts("\nvibesh exited with status ");
             printf("%d\n", result);
         } else {
             console_set_color(COLOR_RED, COLOR_BLACK);
-            console_puts("ERROR: Neither /bin/init nor /bin/vibesh found!\n");
+            console_puts("ERROR: Neither /bin/splash nor /bin/vibesh found!\n");
             console_set_color(COLOR_WHITE, COLOR_BLACK);
-            console_puts("Make sure to run 'make install-user' to install userspace programs.\n");
+            console_puts("Make sure to run 'make' to build userspace programs.\n");
         }
     }
 

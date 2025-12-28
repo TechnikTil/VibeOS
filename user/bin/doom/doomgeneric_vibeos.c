@@ -17,9 +17,10 @@ kapi_t *doom_kapi = 0;
 /* Start time for DG_GetTicksMs */
 static uint64_t start_ticks = 0;
 
-/* Screen positioning - center 640x400 in 800x600 */
-#define SCREEN_OFFSET_X ((800 - DOOMGENERIC_RESX) / 2)
-#define SCREEN_OFFSET_Y ((600 - DOOMGENERIC_RESY) / 2)
+/* Screen positioning - calculated at runtime to center on any resolution */
+static int screen_offset_x = 0;
+static int screen_offset_y = 0;
+static int scale_factor = 1;
 
 /* Key queue for input */
 #define KEYQUEUE_SIZE 64
@@ -165,10 +166,24 @@ void DG_Init(void) {
     /* Record start time */
     start_ticks = doom_kapi->get_uptime_ticks();
 
+    /* Calculate scale factor - largest integer scale that fits */
+    int fb_w = doom_kapi->fb_width;
+    int fb_h = doom_kapi->fb_height;
+    int scale_x = fb_w / DOOMGENERIC_RESX;
+    int scale_y = fb_h / DOOMGENERIC_RESY;
+    scale_factor = (scale_x < scale_y) ? scale_x : scale_y;
+    if (scale_factor < 1) scale_factor = 1;
+
+    /* Calculate centering offsets */
+    int scaled_w = DOOMGENERIC_RESX * scale_factor;
+    int scaled_h = DOOMGENERIC_RESY * scale_factor;
+    screen_offset_x = (fb_w - scaled_w) / 2;
+    screen_offset_y = (fb_h - scaled_h) / 2;
+
     /* Clear screen to black */
     if (doom_kapi->fb_base) {
         uint32_t *fb = doom_kapi->fb_base;
-        int total = doom_kapi->fb_width * doom_kapi->fb_height;
+        int total = fb_w * fb_h;
         for (int i = 0; i < total; i++) {
             fb[i] = 0;
         }
@@ -180,24 +195,40 @@ void DG_Init(void) {
     }
 
     printf("DG_Init: VibeOS DOOM initialized\n");
-    printf("  Screen: %dx%d centered at (%d,%d)\n",
-           DOOMGENERIC_RESX, DOOMGENERIC_RESY,
-           SCREEN_OFFSET_X, SCREEN_OFFSET_Y);
+    printf("  DOOM res: %dx%d, scale: %dx, screen: %dx%d\n",
+           DOOMGENERIC_RESX, DOOMGENERIC_RESY, scale_factor, fb_w, fb_h);
+    printf("  Centered at (%d,%d), output: %dx%d\n",
+           screen_offset_x, screen_offset_y, scaled_w, scaled_h);
 }
 
 void DG_DrawFrame(void) {
     if (!doom_kapi->fb_base || !DG_ScreenBuffer) return;
 
     uint32_t *fb = doom_kapi->fb_base;
-    pixel_t *src = DG_ScreenBuffer;
     int fb_width = doom_kapi->fb_width;
 
-    /* Copy DOOM framebuffer to VibeOS framebuffer, centered */
-    for (int y = 0; y < DOOMGENERIC_RESY; y++) {
-        uint32_t *dst = fb + (y + SCREEN_OFFSET_Y) * fb_width + SCREEN_OFFSET_X;
-        for (int x = 0; x < DOOMGENERIC_RESX; x++) {
-            /* DG_ScreenBuffer is 32-bit ARGB, VibeOS fb is RGB */
-            *dst++ = *src++;
+    if (scale_factor == 1) {
+        /* No scaling - direct copy */
+        pixel_t *src = DG_ScreenBuffer;
+        for (int y = 0; y < DOOMGENERIC_RESY; y++) {
+            uint32_t *dst = fb + (y + screen_offset_y) * fb_width + screen_offset_x;
+            for (int x = 0; x < DOOMGENERIC_RESX; x++) {
+                *dst++ = *src++;
+            }
+        }
+    } else {
+        /* Integer scaling - duplicate pixels */
+        for (int y = 0; y < DOOMGENERIC_RESY; y++) {
+            pixel_t *src_row = DG_ScreenBuffer + y * DOOMGENERIC_RESX;
+            for (int sy = 0; sy < scale_factor; sy++) {
+                uint32_t *dst = fb + (y * scale_factor + sy + screen_offset_y) * fb_width + screen_offset_x;
+                for (int x = 0; x < DOOMGENERIC_RESX; x++) {
+                    uint32_t pixel = src_row[x];
+                    for (int sx = 0; sx < scale_factor; sx++) {
+                        *dst++ = pixel;
+                    }
+                }
+            }
         }
     }
 }

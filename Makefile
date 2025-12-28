@@ -64,7 +64,7 @@ HAL_C_SRCS = $(wildcard $(HAL_DIR)/$(HAL_PLATFORM)/*.c)
 HAL_USB_C_SRCS = $(wildcard $(HAL_DIR)/$(HAL_PLATFORM)/usb/*.c)
 
 # Userspace programs (single-file)
-USER_PROGS = init snake tetris desktop calc vibesh echo ls cat pwd mkdir touch rm term uptime sysmon textedit files date play music ping fetch viewer vim led \
+USER_PROGS = splash snake tetris desktop calc vibesh echo ls cat pwd mkdir touch rm term uptime sysmon textedit files date play music ping fetch viewer vim led \
              clear yes sleep seq whoami hostname uname which basename dirname \
              head tail wc df free ps stat grep find hexdump du cp mv kill lscpu lsusb dmesg mousetest readtest vibecode browser explode help
 
@@ -304,8 +304,7 @@ install: pi user
 	cp $(BUILD_DIR)/firmware/bootcode.bin $$MOUNT/; \
 	cp $(BUILD_DIR)/firmware/start.elf $$MOUNT/; \
 	cp $(BUILD_DIR)/firmware/fixup.dat $$MOUNT/; \
-	echo "arm_64bit=1" > $$MOUNT/config.txt; \
-	echo "kernel=kernel8.img" >> $$MOUNT/config.txt; \
+	cp firmware/config.txt $$MOUNT/; \
 	echo "  Copying kernel..."; \
 	cp $(BUILD_DIR)/kernel8.img $$MOUNT/; \
 	echo "  Copying userspace..."; \
