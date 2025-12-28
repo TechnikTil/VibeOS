@@ -1093,3 +1093,75 @@ Created `/bin/explode` - counts down from 3000ms then crashes via null pointer d
 3. **Memory ranges differ** - QEMU uses high addresses, Pi uses low addresses
 4. **Kernel base differs** - QEMU at 0x0 (flash), Pi at 0x80000 (RAM)
 5. **Linker symbols** - Can define constants in linker script for platform detection
+
+---
+
+## Session 64: Taste Update - Boot Splash & 1080p
+
+**Date**: December 28, 2024
+
+Time for polish! Removed the fake init system and added a proper boot splash.
+
+### Changes Made
+
+**1. Killed the Init System**
+- Deleted `user/bin/init.c` and `vibeos_root/etc/init.conf`
+- It was a fake init that just read a config file and spawned programs
+- Not needed - kernel can boot directly to splash/desktop
+
+**2. Boot Splash Screen** (`user/bin/splash.c`)
+- Modern Mac-style boot splash
+- Black background, white text
+- Pixel-art "VibeOS" logo using hand-crafted 9px tall bitmap font:
+  - V: 7px wide, diagonal stems meeting at point
+  - i: 3px wide, dot + stem
+  - b: 6px wide, tall stem + round bowl
+  - e: 6px wide, curved lowercase
+  - O: 7px wide, clean oval
+  - S: 6px wide, curved S-shape
+- Progress bar below logo (fills over 2 seconds)
+- Auto-scales: 3x at 800x600, 6x at 1080p, 8x at 1440p
+- Then launches `/bin/desktop`
+
+**3. Updated Boot Sequence** (`kernel/shell.c`)
+- Changed from: kernel → shell → init → vibesh/desktop
+- To: kernel → shell → splash → desktop
+- Falls back to vibesh → recovery shell if splash not found
+
+**4. Pi Resolution Bump** (`kernel/hal/pizero2w/fb.c`)
+- Changed from 800x600 to 1920x1080
+- D-cache is now enabled after boot, so 1080p is performant
+- Desktop already uses `api->fb_width/fb_height` so it adapts automatically
+
+**5. DOOM Auto-Scaling** (`user/bin/doom/doomgeneric_vibeos.c`)
+- DOOM renders at 640x400 internally
+- Now auto-detects screen resolution and picks largest integer scale
+- 800x600: 1x scale (640x400 centered)
+- 1920x1080: 2x scale (1280x800 centered, fills most of screen)
+- Crisp pixels, no blurring
+
+**6. Type Fix** (`kernel/hal/pizero2w/platform.c`)
+- Fixed `hal_get_ram_size()` return type from `uint32_t` to `uint64_t`
+- Matches declaration in `hal.h`
+
+### Files Changed
+| File | Change |
+|------|--------|
+| `user/bin/init.c` | DELETED |
+| `vibeos_root/etc/init.conf` | DELETED |
+| `user/bin/splash.c` | CREATED - boot splash |
+| `Makefile` | Replaced `init` with `splash` in USER_PROGS |
+| `kernel/shell.c` | Launch splash instead of init |
+| `kernel/hal/pizero2w/fb.c` | 1920x1080 resolution |
+| `kernel/hal/pizero2w/platform.c` | uint64_t fix |
+| `user/bin/doom/doomgeneric_vibeos.c` | Auto-scaling |
+
+### Design Philosophy
+
+The boot splash follows modern Mac aesthetics:
+- Clean, minimal, no distractions
+- Logo + progress bar, nothing else
+- White on black (1-bit aesthetic)
+- Fake 2-second delay so users can appreciate it
+
+This is the start of the "taste update" - making VibeOS feel polished and intentional rather than hacked together.
