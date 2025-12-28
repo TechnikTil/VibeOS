@@ -353,3 +353,54 @@
 
 ### Files Modified
 - `kernel/console.c` - Line buffering implementation
+
+## Session 56: Modern macOS-Inspired UI Refresh
+
+**Goal**: Transform the retro System 7 aesthetic into a modern macOS Aqua-inspired look with proper window management.
+
+### Desktop Overhaul
+- **Pure white background** - Clean, minimal desktop
+- **Translucent menu bar** - Light gray with subtle shadow
+- **Frosted glass dock** - Solid light gray (#F0F0F0) with rounded corners
+- **Window shadows** - Changed from heavy black blur to subtle light gray
+- **Consistent color matching** - Fixed dock icon/text backgrounds to match dock
+
+### Window Management (Traffic Lights)
+- **Minimize (yellow)** - Window minimizes to dock as thumbnail preview
+- **Maximize (green)** - Toggles between maximized (fills screen between menu bar and dock) and restored position
+- **Restore from dock** - Click minimized window thumbnail to restore
+- **Right-click context menu** - Right-click dock icons for "New Window" option
+
+### App Modernization
+Updated all GUI apps to match new aesthetic:
+- **calc.c** - Light theme with rounded buttons, subtle shadows
+- **sysmon.c** - Clean white background, modern progress bars
+- **files.c** - Light file browser with rounded selection highlights
+- **music.c** - Modern player controls with alpha-blended elements
+- **term.c** - Light terminal with modern styling
+- **textedit.c** - Clean text editor with updated chrome
+
+### New Graphics Primitives (gfx.h)
+- `gfx_fill_rect_alpha()` - Alpha-blended rectangle fill
+- `gfx_fill_rounded_rect_alpha()` - Alpha-blended rounded rectangles
+- `gfx_box_shadow()` - Drop shadows for rectangles
+- `gfx_box_shadow_rounded()` - Drop shadows for rounded rects
+- `gfx_gradient_v()` - Vertical gradient fills
+- `gfx_lerp_color()` - Color interpolation helper
+
+### UI Constants Changed
+- `SHADOW_BLUR`: 8 → 4 (subtler)
+- `COLOR_SHADOW`: Black → #AAAAAA (light gray)
+- `DOCK_PADDING`: 12 → 32 (more spacing for labels)
+- `COLOR_DESKTOP`: Gradient → Pure white (#FFFFFF)
+- Dock: Alpha-blended → Solid (for consistent backgrounds)
+
+### Files Modified
+- `user/bin/desktop.c` - Complete UI overhaul, window management
+- `user/bin/calc.c` - Modern calculator styling
+- `user/bin/sysmon.c` - Light system monitor theme
+- `user/bin/files.c` - Updated file browser
+- `user/bin/music.c` - Modern music player
+- `user/bin/term.c` - Light terminal theme
+- `user/bin/textedit.c` - Clean text editor
+- `user/lib/gfx.h` - New alpha/shadow/gradient primitives
