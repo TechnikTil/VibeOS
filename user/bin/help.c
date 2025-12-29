@@ -56,7 +56,7 @@ static help_section_t sections[] = {
         "\n"
         "Version: 1.0\n"
         "Built with: aarch64-elf-gcc\n"
-        "License: Hobby project, open source\n"
+        "License: MIT\n"
     },
     {
         "Getting Started",

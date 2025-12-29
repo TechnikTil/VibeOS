@@ -120,7 +120,7 @@ void kernel_main(void) {
         (void)sink;  // Prevent optimization
     }
     printf("\n");
-    printf("VibeOS v0.1 - aarch64\n");
+    printf("VibeOS v1.0 - aarch64\n");
     printf("=====================\n\n");
     printf("[BOOT] Kernel loaded successfully!\n");
     printf("[BOOT] UART initialized.\n");
@@ -151,10 +151,6 @@ void kernel_main(void) {
     console_puts(" | | | | | '_ \\ / _ \\ | | \\___ \\ \n");
     console_puts(" | \\_/ | | |_) |  __/ |_| |___) |\n");
     console_puts("  \\___/|_|_.__/ \\___|\\___/|____/ \n");
-    console_set_color(COLOR_WHITE, COLOR_BLACK);
-    console_puts("                            by ");
-    console_set_color(COLOR_AMBER, COLOR_BLACK);
-    console_puts("Claude\n");
     console_puts("\n");
     console_set_color(COLOR_WHITE, COLOR_BLACK);
     console_puts("==========================================\n\n");

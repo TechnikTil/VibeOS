@@ -4,9 +4,6 @@
  * - BCM2835 ARM Peripherals (publicly available from Broadcom)
  * - SD Physical Layer Simplified Specification v3.00
  * - SDHCI Specification v3.00
- *
- * Copyright (c) 2024 VibeOS Contributors
- * This is original code, not derived from any GPL sources.
  */
 
 #include "../hal.h"

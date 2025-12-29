@@ -1192,7 +1192,7 @@ static void draw_about_dialog(void) {
     bb_draw_string(title_x, y + 74, title, COLOR_MENU_TEXT, 0x00FAFAFA);
 
     // Version
-    const char *version = "Version 2.0";
+    const char *version = "Version 1.0";
     int ver_x = x + (ABOUT_W - strlen(version) * 8) / 2;
     bb_draw_string(ver_x, y + 94, version, 0x00666666, 0x00FAFAFA);
 

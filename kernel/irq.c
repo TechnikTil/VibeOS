@@ -97,24 +97,6 @@ void sleep_ms(uint32_t ms) {
 // WSOD - White Screen of Death
 // The final art piece of VibeOS
 
-static const char *wsod_quotes[] = {
-    "\"Imagination is more important than knowledge.\" - Albert Einstein",
-    "\"The only real mistake is the one from which we learn nothing.\" - Henry Ford",
-    "\"Death solves all problems. No man, no problem.\" - Joseph Stalin",
-    "\"In the middle of difficulty lies opportunity.\" - Albert Einstein",
-    "\"One death is a tragedy; a million is a statistic.\" - Joseph Stalin",
-    "\"Stay hungry, stay foolish.\" - Steve Jobs",
-    "\"The best way to predict the future is to invent it.\" - Alan Kay",
-    "\"First, solve the problem. Then, write the code.\" - John Johnson",
-    "\"It works on my machine.\" - Every Developer Ever",
-    "\"Have you tried turning it off and on again?\" - IT Support",
-    "\"There are only two hard things: cache invalidation and naming things.\" - Phil Karlton",
-    "\"99 little bugs in the code, take one down, patch it around... 127 bugs in the code.\" - Anonymous",
-    "\"The vibes were, in fact, not immaculate.\" - VibeOS",
-    "\"I have not failed. I've just found 10,000 ways that won't work.\" - Thomas Edison",
-    "\"Reality is merely an illusion, albeit a very persistent one.\" - Albert Einstein",
-};
-#define WSOD_QUOTE_COUNT (sizeof(wsod_quotes) / sizeof(wsod_quotes[0]))
 
 static const char *wsod_art[] = {
     "          _______",
@@ -569,25 +551,10 @@ void handle_sync_exception(uint64_t esr, uint64_t elr, uint64_t far, uint64_t *r
             }
         }
 
-        // Random quote - use multiple entropy sources
-        uint64_t cntpct;
-        asm volatile("mrs %0, cntpct_el0" : "=r"(cntpct));  // High-res system counter
-        uint64_t entropy = cntpct ^ (far * 31) ^ (elr * 17) ^ (esr * 13);
-        int quote_idx = (entropy >> 8) % WSOD_QUOTE_COUNT;  // Use middle bits
-        const char *quote = wsod_quotes[quote_idx];
-
         // Bottom section
-        info_y = fb_height - 80;
+        info_y = fb_height - 60;
         wsod_draw_line(info_y);
         info_y += 16;
-
-        // Draw quote centered
-        int quote_len = 0;
-        while (quote[quote_len]) quote_len++;
-        int quote_x = (fb_width - quote_len * 8) / 2;
-        if (quote_x < 8) quote_x = 8;
-        wsod_draw_text(quote_x, info_y, quote);
-        info_y += 24;
 
         // System halted message
         const char *msg = "System halted. Please restart your computer.";
@@ -665,23 +632,9 @@ void handle_serror(uint64_t esr) {
         wsod_draw_text(left_col + 136, info_y, buf);
         info_y += 20;
 
-        // Random quote - use multiple entropy sources
-        uint64_t cntpct;
-        asm volatile("mrs %0, cntpct_el0" : "=r"(cntpct));
-        uint64_t entropy = cntpct ^ (esr * 31);
-        int quote_idx = (entropy >> 8) % WSOD_QUOTE_COUNT;
-        const char *quote = wsod_quotes[quote_idx];
-
-        info_y = fb_height - 80;
+        info_y = fb_height - 60;
         wsod_draw_line(info_y);
         info_y += 16;
-
-        int quote_len = 0;
-        while (quote[quote_len]) quote_len++;
-        int quote_x = (fb_width - quote_len * 8) / 2;
-        if (quote_x < 8) quote_x = 8;
-        wsod_draw_text(quote_x, info_y, quote);
-        info_y += 24;
 
         const char *msg = "System halted. Please restart your computer.";
         int msg_len = 0;
