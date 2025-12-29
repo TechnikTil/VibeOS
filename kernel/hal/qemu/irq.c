@@ -64,11 +64,6 @@ static void timer_handler(void) {
     // Pump audio if playing
     virtio_sound_pump();
 
-    // Blink console cursor (every 50 ticks = 500ms at 100Hz)
-    if ((timer_ticks % 50) == 0) {
-        console_blink_cursor();
-    }
-
     // Preemptive scheduling - switch every 20 ticks (200ms timeslice)
     if ((timer_ticks % 20) == 0) {
         process_schedule_from_irq();

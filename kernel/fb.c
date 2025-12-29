@@ -23,9 +23,9 @@ static int current_buffer = 0;  // 0 = top half visible, 1 = bottom half visible
 int fb_init(void) {
     // Note: Don't use printf here - console isn't initialized yet!
 
-    // Call platform-specific init with 800x600 resolution (matches Pi)
+    // Call platform-specific init with 1280x800 resolution
     // Pi overrides to 800x600 anyway for performance
-    if (hal_fb_init(800, 600) < 0) {
+    if (hal_fb_init(1280, 800) < 0) {
         return -1;
     }
 
