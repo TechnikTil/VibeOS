@@ -238,6 +238,9 @@ void console_putc(char c) {
     // Show cursor at new position (static cursor, always visible)
     if (cursor_enabled && !cursor_visible) {
         draw_cursor(1);
+    } else {
+        // Flush line buffer even when cursor is disabled (for games like snake)
+        line_buf_flush();
     }
 }
 
