@@ -1,12 +1,12 @@
 # VibeOS
 
-A hobby OS built from scratch with Claude.
+A hobby OS vibecoded completelty from scratch with Claude Code.
 Not everything works, some stuff is not even tested, but most things do. 
 ![VibeOS Desktop](screenshots/desktop.png)
 
 ## What is this?
 
-VibeOS is an operating system written from scratch for ARM64 (aarch64). It runs on QEMU and real Raspberry Pi Zero 2W hardware. The entire OS was built in collaboration with Claude over 64 sessions, documented in the [session logs](SESSION_LOG_1.md).
+VibeOS is an operating system written from scratch for ARM64 (aarch64). It runs on QEMU and real Raspberry Pi Zero 2W. The entire OS was built in collaboration with Claude over 64 sessions, documented in the [session logs](SESSION_LOG_1.md).
 
 
 ## Features
