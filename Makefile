@@ -11,8 +11,15 @@
 # Target selection (default: qemu)
 TARGET ?= qemu
 
-# Cross-compiler toolchain
-CROSS_COMPILE ?= aarch64-elf-
+# Detect host OS
+UNAME_S := $(shell uname -s)
+
+# Cross-compiler toolchain (auto-detect based on OS)
+ifeq ($(UNAME_S),Darwin)
+    CROSS_COMPILE ?= aarch64-elf-
+else
+    CROSS_COMPILE ?= aarch64-linux-gnu-
+endif
 CC = $(CROSS_COMPILE)gcc
 AS = $(CROSS_COMPILE)as
 LD = $(CROSS_COMPILE)ld
@@ -92,10 +99,15 @@ LDFLAGS = -nostdlib -T $(LINKER_SCRIPT)
 USER_CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=$(CPU) -mstrict-align -fPIE -Wall -Wextra -O3 -I$(USER_DIR)/lib
 USER_LDFLAGS = -nostdlib -pie -T user/linker.ld
 
-# QEMU settings
+# QEMU settings (audio backend varies by OS)
 QEMU = qemu-system-aarch64
-QEMU_FLAGS = -M virt,secure=on -cpu cortex-a72 -m 512M -rtc base=utc,clock=host -global virtio-mmio.force-legacy=false -device ramfb -device virtio-blk-device,drive=hd0 -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 -device virtio-keyboard-device -device virtio-tablet-device -device virtio-sound-device,audiodev=audio0 -audiodev coreaudio,id=audio0 -device virtio-net-device,netdev=net0 -netdev user,id=net0 -serial stdio -bios $(BUILD_DIR)/vibeos.bin
-QEMU_FLAGS_NOGRAPHIC = -M virt,secure=on -cpu cortex-a72 -m 512M -rtc base=utc,clock=host -global virtio-mmio.force-legacy=false -device virtio-blk-device,drive=hd0 -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 -device virtio-sound-device,audiodev=audio0 -audiodev coreaudio,id=audio0 -device virtio-net-device,netdev=net0 -netdev user,id=net0 -nographic -bios $(BUILD_DIR)/vibeos.bin
+ifeq ($(UNAME_S),Darwin)
+    QEMU_AUDIO = -audiodev coreaudio,id=audio0
+else
+    QEMU_AUDIO = -audiodev pipewire,id=audio0
+endif
+QEMU_FLAGS = -M virt,secure=on -cpu cortex-a72 -m 512M -rtc base=utc,clock=host -global virtio-mmio.force-legacy=false -device ramfb -device virtio-blk-device,drive=hd0 -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 -device virtio-keyboard-device -device virtio-tablet-device -device virtio-sound-device,audiodev=audio0 $(QEMU_AUDIO) -device virtio-net-device,netdev=net0 -netdev user,id=net0 -serial stdio -bios $(BUILD_DIR)/vibeos.bin
+QEMU_FLAGS_NOGRAPHIC = -M virt,secure=on -cpu cortex-a72 -m 512M -rtc base=utc,clock=host -global virtio-mmio.force-legacy=false -device virtio-blk-device,drive=hd0 -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 -device virtio-sound-device,audiodev=audio0 $(QEMU_AUDIO) -device virtio-net-device,netdev=net0 -netdev user,id=net0 -nographic -bios $(BUILD_DIR)/vibeos.bin
 
 .PHONY: all clean run run-nographic run-pi user install disk pi pi-debug sync-disk
 
@@ -206,16 +218,27 @@ user: $(USER_BINS) $(CRT_FILES)
 $(DISK_IMG):
 	@echo "Creating FAT32 disk image..."
 	dd if=/dev/zero of=$(DISK_IMG) bs=1M count=$(DISK_SIZE)
+ifeq ($(UNAME_S),Darwin)
 	@DISK_DEV=$$(hdiutil attach -nomount $(DISK_IMG) | head -1 | awk '{print $$1}') && \
 		newfs_msdos -F 32 -v VIBEOS $$DISK_DEV && \
 		hdiutil detach $$DISK_DEV
+else
+	@LOOP_DEV=$$(sudo losetup --find --show $(DISK_IMG)) && \
+		sudo mkfs.vfat -F 32 -n VIBEOS $$LOOP_DEV && \
+		sudo losetup -d $$LOOP_DEV
+endif
 	@echo "Disk image created: $(DISK_IMG)"
 
 disk: $(DISK_IMG)
 
 # Sync vibeos_root/ to QEMU disk image (internal target)
 sync-disk: user $(DISK_IMG)
+ifeq ($(UNAME_S),Darwin)
 	@hdiutil attach $(DISK_IMG) -nobrowse -mountpoint /tmp/vibeos_mount > /dev/null
+else
+	@mkdir -p /tmp/vibeos_mount
+	@sudo mount -o loop $(DISK_IMG) /tmp/vibeos_mount
+endif
 	@rsync -a $(SYSROOT)/ /tmp/vibeos_mount/
 	@mkdir -p /tmp/vibeos_mount/usr/src
 	@rsync -a --exclude='*.o' --exclude='*.elf' --exclude='build/' user/ /tmp/vibeos_mount/usr/src/user/
@@ -235,11 +258,15 @@ sync-disk: user $(DISK_IMG)
 	@cp tinycc/vibeos/libc.a /tmp/vibeos_mount/lib/tcc/lib/
 	@cp tinycc/vibeos/libc.a /tmp/vibeos_mount/lib/tcc/lib/libc.so
 	@cp user/linker.ld /tmp/vibeos_mount/lib/tcc/lib/
+ifeq ($(UNAME_S),Darwin)
 	@dot_clean /tmp/vibeos_mount 2>/dev/null || true
 	@find /tmp/vibeos_mount -name '._*' -delete 2>/dev/null || true
 	@find /tmp/vibeos_mount -name '.DS_Store' -delete 2>/dev/null || true
 	@rm -rf /tmp/vibeos_mount/.fseventsd /tmp/vibeos_mount/.Spotlight-V100 /tmp/vibeos_mount/.Trashes 2>/dev/null || true
 	@hdiutil detach /tmp/vibeos_mount > /dev/null
+else
+	@sudo umount /tmp/vibeos_mount
+endif
 
 # ============ Run targets ============
 
@@ -293,39 +320,46 @@ install: pi user
 			exit 1; \
 		fi; \
 		echo "  Mounted at $$MOUNT"; \
+		COPY="cp"; \
+		RSYNC="rsync"; \
+		MKDIR="mkdir"; \
 	else \
+		echo "  Partitioning disk (MBR + FAT32)..."; \
 		sudo parted $(DISK) --script mklabel msdos mkpart primary fat32 1MiB 100%; \
 		sudo mkfs.vfat -F 32 -n VIBEOS $(DISK)1; \
 		mkdir -p /tmp/vibeos_sd; \
 		sudo mount $(DISK)1 /tmp/vibeos_sd; \
 		MOUNT=/tmp/vibeos_sd; \
+		COPY="sudo cp"; \
+		RSYNC="sudo rsync"; \
+		MKDIR="sudo mkdir"; \
 	fi; \
 	echo "  Copying boot firmware..."; \
-	cp $(BUILD_DIR)/firmware/bootcode.bin $$MOUNT/; \
-	cp $(BUILD_DIR)/firmware/start.elf $$MOUNT/; \
-	cp $(BUILD_DIR)/firmware/fixup.dat $$MOUNT/; \
-	cp firmware/config.txt $$MOUNT/; \
+	$$COPY $(BUILD_DIR)/firmware/bootcode.bin $$MOUNT/; \
+	$$COPY $(BUILD_DIR)/firmware/start.elf $$MOUNT/; \
+	$$COPY $(BUILD_DIR)/firmware/fixup.dat $$MOUNT/; \
+	$$COPY firmware/config.txt $$MOUNT/; \
 	echo "  Copying kernel..."; \
-	cp $(BUILD_DIR)/kernel8.img $$MOUNT/; \
+	$$COPY $(BUILD_DIR)/kernel8.img $$MOUNT/; \
 	echo "  Copying userspace..."; \
-	rsync -a $(SYSROOT)/ $$MOUNT/; \
-	mkdir -p $$MOUNT/usr/src; \
-	rsync -a --exclude='*.o' --exclude='*.elf' --exclude='build/' user/ $$MOUNT/usr/src/user/; \
-	rsync -a --exclude='*.o' --exclude='build/' tinycc/ $$MOUNT/usr/src/tinycc/; \
-	mkdir -p $$MOUNT/lib/tcc/include; \
-	mkdir -p $$MOUNT/lib/tcc/lib; \
-	cp -r tinycc/include/* $$MOUNT/lib/tcc/include/; \
-	cp tinycc/vibeos/tcc_include/* $$MOUNT/lib/tcc/include/ 2>/dev/null || true; \
-	cp user/lib/vibe.h $$MOUNT/lib/tcc/include/; \
-	cp user/lib/gfx.h $$MOUNT/lib/tcc/include/ 2>/dev/null || true; \
-	cp $(BUILD_DIR)/user/crt0.o $$MOUNT/lib/tcc/lib/crt1.o; \
-	cp $(BUILD_DIR)/user/crt0.o $$MOUNT/lib/tcc/lib/Scrt1.o; \
-	cp $(BUILD_DIR)/user/crti.o $$MOUNT/lib/tcc/lib/; \
-	cp $(BUILD_DIR)/user/crtn.o $$MOUNT/lib/tcc/lib/; \
-	cp tinycc/vibeos/libtcc1.a $$MOUNT/lib/tcc/lib/; \
-	cp tinycc/vibeos/libc.a $$MOUNT/lib/tcc/lib/; \
-	cp tinycc/vibeos/libc.a $$MOUNT/lib/tcc/lib/libc.so; \
-	cp user/linker.ld $$MOUNT/lib/tcc/lib/; \
+	$$RSYNC -a $(SYSROOT)/ $$MOUNT/; \
+	$$MKDIR -p $$MOUNT/usr/src; \
+	$$RSYNC -a --exclude='*.o' --exclude='*.elf' --exclude='build/' user/ $$MOUNT/usr/src/user/; \
+	$$RSYNC -a --exclude='*.o' --exclude='build/' tinycc/ $$MOUNT/usr/src/tinycc/; \
+	$$MKDIR -p $$MOUNT/lib/tcc/include; \
+	$$MKDIR -p $$MOUNT/lib/tcc/lib; \
+	$$COPY -r tinycc/include/* $$MOUNT/lib/tcc/include/; \
+	$$COPY tinycc/vibeos/tcc_include/* $$MOUNT/lib/tcc/include/ 2>/dev/null || true; \
+	$$COPY user/lib/vibe.h $$MOUNT/lib/tcc/include/; \
+	$$COPY user/lib/gfx.h $$MOUNT/lib/tcc/include/ 2>/dev/null || true; \
+	$$COPY $(BUILD_DIR)/user/crt0.o $$MOUNT/lib/tcc/lib/crt1.o; \
+	$$COPY $(BUILD_DIR)/user/crt0.o $$MOUNT/lib/tcc/lib/Scrt1.o; \
+	$$COPY $(BUILD_DIR)/user/crti.o $$MOUNT/lib/tcc/lib/; \
+	$$COPY $(BUILD_DIR)/user/crtn.o $$MOUNT/lib/tcc/lib/; \
+	$$COPY tinycc/vibeos/libtcc1.a $$MOUNT/lib/tcc/lib/; \
+	$$COPY tinycc/vibeos/libc.a $$MOUNT/lib/tcc/lib/; \
+	$$COPY tinycc/vibeos/libc.a $$MOUNT/lib/tcc/lib/libc.so; \
+	$$COPY user/linker.ld $$MOUNT/lib/tcc/lib/; \
 	if [ "$$(uname)" = "Darwin" ]; then \
 		dot_clean $$MOUNT 2>/dev/null || true; \
 		find $$MOUNT -name '._*' -delete 2>/dev/null || true; \
@@ -354,5 +388,13 @@ distclean: clean
 	rm -f $(DISK_IMG)
 
 check-toolchain:
+ifeq ($(UNAME_S),Darwin)
 	@which $(CC) > /dev/null 2>&1 || \
 	(echo "Cross-compiler not found. Install with: brew install aarch64-elf-gcc" && exit 1)
+else
+	@which $(CC) > /dev/null 2>&1 || \
+	(echo "Cross-compiler not found. Install with:" && \
+	 echo "  Ubuntu/Debian: sudo apt install gcc-aarch64-linux-gnu" && \
+	 echo "  Fedora: sudo dnf install gcc-aarch64-linux-gnu" && \
+	 echo "  Arch: sudo pacman -S aarch64-linux-gnu-gcc" && exit 1)
+endif
