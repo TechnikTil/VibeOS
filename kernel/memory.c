@@ -37,7 +37,8 @@ static size_t stat_free = 0;      // Total bytes free
 static int stat_alloc_count = 0;  // Number of active allocations
 
 // Defined in linker script - end of BSS in RAM
-extern uint64_t _bss_end;
+// Declared as char[] so the symbol name gives the address directly
+extern char _bss_end[];
 
 // Stack location (must match boot.S!)
 #ifdef TARGET_PI
@@ -72,7 +73,7 @@ void memory_init(void) {
 
     // Heap starts after BSS, aligned to 16 bytes
     // Add 64KB buffer after BSS for safety
-    heap_start = ALIGN_UP((uint64_t)&_bss_end + 0x10000, 16);
+    heap_start = ALIGN_UP((uint64_t)_bss_end + 0x10000, 16);
 
     // Heap ends well before the stack - leave room for programs!
     // Programs load after heap_end, so we need to reserve space.
