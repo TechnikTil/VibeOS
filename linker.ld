@@ -52,6 +52,9 @@ SECTIONS
         _data_start = .;
         *(.data)
         *(.data.*)
+        /* GOT sections must be in RAM (contain runtime addresses) */
+        *(.got)
+        *(.got.plt)
         _data_end = .;
     } > RAM
 
