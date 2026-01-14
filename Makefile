@@ -100,14 +100,26 @@ LDFLAGS = -nostdlib -T $(LINKER_SCRIPT)
 USER_CFLAGS = -ffreestanding -nostdlib -nostartfiles -mcpu=$(CPU) -mstrict-align -fPIE -Wall -Wextra -Wno-unused-variable -Wno-unused-function -O3 -I$(USER_DIR)/lib
 USER_LDFLAGS = -nostdlib -pie -T user/linker.ld
 
-# QEMU settings (audio backend varies by OS)
+# QEMU settings (audio/display backends vary by OS)
 QEMU = qemu-system-aarch64
+
+# Audio device selection (auto-detect by default)
+# Options: sdl, pulseaudio, alsa, coreaudio (macOS), pipewire, etc.
+# Usage: make run AUDIODEV=pulseaudio
+#
+# Display backend selection (auto-detect by default)
+# Options: gtk, sdl, cocoa (macOS), none, etc.
+# Usage: make run QEMU_DISPLAY_OPT=sdl
 ifeq ($(UNAME_S),Darwin)
-    QEMU_AUDIO = -audiodev coreaudio,id=audio0
+    AUDIODEV ?= coreaudio
+    QEMU_DISPLAY_OPT ?= cocoa
 else
-    QEMU_AUDIO = -audiodev pipewire,id=audio0
+    AUDIODEV ?= sdl
+    QEMU_DISPLAY_OPT ?= gtk
 endif
-QEMU_FLAGS = -M virt,secure=on -cpu cortex-a72 -m 512M -rtc base=utc,clock=host -global virtio-mmio.force-legacy=false -device ramfb -device virtio-blk-device,drive=hd0 -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 -device virtio-keyboard-device -device virtio-tablet-device -device virtio-sound-device,audiodev=audio0 $(QEMU_AUDIO) -device virtio-net-device,netdev=net0 -netdev user,id=net0 -serial stdio -bios $(BUILD_DIR)/vibeos.bin
+QEMU_AUDIO = -audiodev $(AUDIODEV),id=audio0
+QEMU_DISPLAY = -display $(QEMU_DISPLAY_OPT)
+QEMU_FLAGS = -M virt,secure=on -cpu cortex-a72 -m 512M -rtc base=utc,clock=host -global virtio-mmio.force-legacy=false -device ramfb -device virtio-blk-device,drive=hd0 -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 -device virtio-keyboard-device -device virtio-tablet-device -device virtio-sound-device,audiodev=audio0 $(QEMU_AUDIO) -device virtio-net-device,netdev=net0 -netdev user,id=net0 $(QEMU_DISPLAY) -serial stdio -bios $(BUILD_DIR)/vibeos.bin
 QEMU_FLAGS_NOGRAPHIC = -M virt,secure=on -cpu cortex-a72 -m 512M -rtc base=utc,clock=host -global virtio-mmio.force-legacy=false -device virtio-blk-device,drive=hd0 -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 -device virtio-sound-device,audiodev=audio0 $(QEMU_AUDIO) -device virtio-net-device,netdev=net0 -netdev user,id=net0 -nographic -bios $(BUILD_DIR)/vibeos.bin
 
 .PHONY: all clean run run-nographic run-pi user install disk pi pi-debug sync-disk
